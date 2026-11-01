@@ -35,7 +35,9 @@ data class SimSettings(
     val seatRotation: Boolean = true,
 )
 
-class AppViewModel(app: Application) : AndroidViewModel(app) {
+class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) {
+    constructor(app: Application) : this(app, true)
+
     private val decksRepo = DeckRepository(app.filesDir)
     private val reportRepo = ReportRepository(app.filesDir)
     private val scryfall = ScryfallClient()
@@ -57,7 +59,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var simJob: Job? = null
 
     init {
-        viewModelScope.launch {
+        if (autoLoad) viewModelScope.launch {
             decksRepo.load()
             reportRepo.load()
             // New decks default: first one a candidate, the rest opponents.
@@ -147,6 +149,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _sim.value = SimState.Failed(e.message ?: "Simulation failed")
             }
         }
+    }
+
+    /** Loads decks and a report directly, without Scryfall. Used by screenshot tests. */
+    internal suspend fun seedForPreview(decks: List<Deck>, roles: Map<String, DeckRole>, report: com.eddiew.commandersim.data.model.SimulationReport?) {
+        decks.forEach { decksRepo.upsert(it) }
+        _settings.update { it.copy(roles = roles) }
+        if (report != null) reportRepo.save(report)
     }
 
     fun cancelSimulation() {
