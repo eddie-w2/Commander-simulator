@@ -4,4 +4,4 @@ Finds which Commander deck from a set of candidates wins most often against a kn
 
 See [PLAN.md](PLAN.md) for the architecture, optimization plan and milestones.
 
-License: GPL-3.0 (the simulator links Forge, which is GPL-3.0).
+License: private while in testing. GPL-3.0 will be applied at the first working release (required, since the simulator links Forge, which is GPL-3.0).
