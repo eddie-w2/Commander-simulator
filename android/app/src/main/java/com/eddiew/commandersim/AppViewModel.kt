@@ -151,13 +151,6 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         }
     }
 
-    /** Loads decks and a report directly, without Scryfall. Used by screenshot tests. */
-    internal suspend fun seedForPreview(decks: List<Deck>, roles: Map<String, DeckRole>, report: com.eddiew.commandersim.data.model.SimulationReport?) {
-        decks.forEach { decksRepo.upsert(it) }
-        _settings.update { it.copy(roles = roles) }
-        if (report != null) reportRepo.save(report)
-    }
-
     fun cancelSimulation() {
         simJob?.cancel()
         _sim.value = SimState.Idle

@@ -23,8 +23,5 @@ Kotlin + Jetpack Compose, dark grey / electric blue HUD theme.
 ### Build locally
 Android Studio (Ladybug or newer), JDK 17: open `/android` and run. Or run `./gradlew assembleDebug` from `/android`.
 
-### Screenshots
-CI renders the main screens with Robolectric and pushes them to the [`screenshots`](../../tree/screenshots) branch.
-
 ## License
 Private while in testing. GPL-3.0 will be applied at the first working release. This is required because the simulator links Forge, which is GPL-3.0.

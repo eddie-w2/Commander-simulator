@@ -33,13 +33,6 @@ android {
     buildFeatures {
         compose = true
     }
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-        unitTests.all {
-            it.maxHeapSize = "2g"
-            it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
-        }
-    }
 }
 
 dependencies {
@@ -57,13 +50,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.compose.ui.tooling)
-    debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.robolectric)
-    testImplementation(libs.androidx.test.core)
-    testImplementation(libs.androidx.test.ext.junit)
-    testImplementation(platform(libs.compose.bom))
-    testImplementation(libs.compose.ui.test.junit4)
 }
