@@ -1,0 +1,165 @@
+package com.eddiew.commandersim.data
+
+import com.eddiew.commandersim.data.model.DeckCard
+
+/**
+ * Parses pasted deck lists. Handles the common export formats:
+ *  - Plain / MTGO:   "1 Sol Ring"
+ *  - Moxfield:       "1 Sol Ring (CMR) 472 *F*"
+ *  - Archidekt:      "1x Sol Ring (cmr) 472 [Ramp]", commander tagged "[Commander{top}]"
+ *  - Arena:          "Commander" / "Deck" section headers
+ *  - Deckstats:      "1 Atraxa, Praetors' Voice # !Commander" or "*CMDR*"
+ *  - "// Commander", "COMMANDER:", "Sideboard:", "Maybeboard" headers
+ */
+object DeckParser {
+
+    data class Result(
+        val commanders: List<DeckCard>,
+        val cards: List<DeckCard>,
+        val ignored: List<String>,
+        val warnings: List<String>,
+    ) {
+        val total: Int get() = commanders.sumOf { it.quantity } + cards.sumOf { it.quantity }
+    }
+
+    private enum class Section { MAIN, COMMANDER, SKIP }
+
+    private val headerRegex = Regex(
+        """^(?://\s*)?(commanders?|command zone|deck|main\s*deck|mainboard|main|sideboard|maybeboard|maybe|considering|companion|tokens?|about|name)\s*:?\s*(?:\(\d+\))?$""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val categoryRegex = Regex("""^([A-Za-z][A-Za-z /&'-]*?)\s*\(\d+\)\s*:?$""")
+    private val skipCategories = setOf("sideboard", "maybeboard", "maybe", "considering", "tokens", "token", "companion")
+    private val countRegex =Regex("""^(\d+)\s*[xX]?\s+(.+)$""")
+    private val setNumberRegex = Regex("""\s+\(([A-Za-z0-9]{2,6})\)(?:\s+([A-Za-z0-9\-★]+))?\s*$""")
+    private val bracketTagRegex = Regex("""\[([^\]]*)\]""")
+    private val caretTagRegex = Regex("""\^[^^]*\^""")
+    private val foilRegex = Regex("""\s+\*[A-Za-z]{1,6}\*""")
+    private val commanderMarker = Regex("""\*CMDR\*|#\s*!?commander\b""", RegexOption.IGNORE_CASE)
+    private val hashTagRegex = Regex("""\s+#\S.*$""")
+
+    val basicLands = setOf(
+        "plains", "island", "swamp", "mountain", "forest", "wastes",
+        "snow-covered plains", "snow-covered island", "snow-covered swamp",
+        "snow-covered mountain", "snow-covered forest", "snow-covered wastes",
+    )
+
+    /** Cards whose text allows any number (or a fixed number above one) in a deck. */
+    val multiCopyAllowed = setOf(
+        "relentless rats", "shadowborn apostle", "rat colony", "persistent petitioners",
+        "dragon's approach", "slime against humanity", "hare apparent", "templar knight",
+        "seven dwarves", "nazgûl", "nazgul", "cid, timeless artificer",
+    )
+
+    fun parse(text: String): Result {
+        var section = Section.MAIN
+        val commanders = LinkedHashMap<String, DeckCard>()
+        val cards = LinkedHashMap<String, DeckCard>()
+        val ignored = mutableListOf<String>()
+
+        for (raw in text.lines()) {
+            val line = raw.trim().trimStart('﻿')
+            if (line.isEmpty()) continue
+
+            val header = headerRegex.matchEntire(line)
+            if (header != null) {
+                val h = header.groupValues[1].lowercase()
+                section = when {
+                    h.startsWith("command") -> Section.COMMANDER
+                    h.startsWith("deck") || h.startsWith("main") -> Section.MAIN
+                    else -> Section.SKIP
+                }
+                continue
+            }
+            // Category headers such as "Creatures (30)" or "Sideboard (5):"
+            val category = categoryRegex.matchEntire(line)
+            if (category != null) {
+                val c = category.groupValues[1].trim().lowercase()
+                section = when {
+                    c.startsWith("command") -> Section.COMMANDER
+                    c in skipCategories -> Section.SKIP
+                    else -> Section.MAIN
+                }
+                continue
+            }
+            if (line.startsWith("//") || line.startsWith("#")) continue
+            if (section == Section.SKIP) {
+                ignored += line
+                continue
+            }
+
+            val parsed = parseCardLine(line)
+            if (parsed == null) {
+                ignored += line
+                continue
+            }
+            val (card, flaggedCommander) = parsed
+            val target = if (section == Section.COMMANDER || flaggedCommander) commanders else cards
+            val key = card.name.lowercase()
+            val existing = target[key]
+            target[key] = existing?.copy(quantity = existing.quantity + card.quantity) ?: card
+        }
+
+        val result = Result(commanders.values.toList(), cards.values.toList(), ignored, emptyList())
+        return result.copy(warnings = validate(result))
+    }
+
+    /** Returns the card and whether the line itself marks it as a commander. */
+    internal fun parseCardLine(line: String): Pair<DeckCard, Boolean>? {
+        var rest = line
+        var isCommander = commanderMarker.containsMatchIn(rest)
+        rest = commanderMarker.replace(rest, "")
+
+        // Archidekt category tags like [Commander{top}] or [Ramp,Draw]
+        for (m in bracketTagRegex.findAll(rest)) {
+            if (m.groupValues[1].contains("commander", ignoreCase = true)) isCommander = true
+        }
+        rest = bracketTagRegex.replace(rest, "")
+        rest = caretTagRegex.replace(rest, "")
+        rest = foilRegex.replace(rest, "")
+        rest = hashTagRegex.replace(rest, "")
+        rest = rest.trim()
+
+        var quantity = 1
+        countRegex.matchEntire(rest)?.let {
+            quantity = it.groupValues[1].toInt()
+            rest = it.groupValues[2].trim()
+        }
+        if (quantity <= 0) return null
+
+        var setCode: String? = null
+        var number: String? = null
+        setNumberRegex.find(rest)?.let {
+            setCode = it.groupValues[1].uppercase()
+            number = it.groupValues[2].ifEmpty { null }
+            rest = rest.substring(0, it.range.first).trim()
+        }
+
+        // Normalise split/double-faced separators: "Fire/Ice" or "Fire / Ice" -> "Fire // Ice"
+        rest = rest.replace(Regex("""\s*/{1,2}\s*"""), " // ")
+        if (rest.isBlank() || rest.all { it.isDigit() }) return null
+        return DeckCard(name = rest, quantity = quantity, setCode = setCode, collectorNumber = number) to isCommander
+    }
+
+    fun validate(result: Result): List<String> {
+        val warnings = mutableListOf<String>()
+        if (result.commanders.isEmpty()) {
+            warnings += "No commander found. Pick one from the list."
+        } else if (result.commanders.size > 2) {
+            warnings += "${result.commanders.size} commanders marked. Commander allows 1, or 2 with Partner/Background."
+        }
+        if (result.total != 100) warnings += "Deck has ${result.total} cards (Commander decks have exactly 100)."
+        val dupes = result.cards.filter {
+            it.quantity > 1 && it.name.lowercase() !in basicLands && it.name.lowercase() !in multiCopyAllowed
+        }
+        if (dupes.isNotEmpty()) {
+            warnings += "More than one copy of: " + dupes.joinToString(", ") { "${it.name} ×${it.quantity}" }
+        }
+        return warnings
+    }
+
+    /** Guess a deck name from the commander when the user didn't give one. */
+    fun suggestName(result: Result): String =
+        result.commanders.firstOrNull()?.name?.substringBefore(",")?.substringBefore(" // ")?.trim()
+            ?: "Untitled deck"
+}
