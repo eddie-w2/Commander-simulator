@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -129,14 +130,24 @@ fun HudPanel(
     }
 }
 
-/** Screen header with an animated scan line sweeping under the title. */
+/** Turns off looping decorative animations (used by screenshot tests, which wait for the UI to go idle). */
+val LocalHudMotion = staticCompositionLocalOf { true }
+
 @Composable
-fun ScreenHeader(title: String, subtitle: String? = null, trailing: @Composable RowScope.() -> Unit = {}) {
+private fun scanSweep(): Float {
+    if (!LocalHudMotion.current) return 0.55f
     val transition = rememberInfiniteTransition(label = "scan")
     val sweep by transition.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart), label = "sweep",
     )
+    return sweep
+}
+
+/** Screen header with an animated scan line sweeping under the title. */
+@Composable
+fun ScreenHeader(title: String, subtitle: String? = null, trailing: @Composable RowScope.() -> Unit = {}) {
+    val sweep = scanSweep()
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {

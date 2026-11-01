@@ -3,6 +3,7 @@ package com.eddiew.commandersim
 import android.app.Application
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -16,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.eddiew.commandersim.data.model.DeckRole
 import com.eddiew.commandersim.data.model.SimConfig
 import com.eddiew.commandersim.sim.SampleSimulator
+import com.eddiew.commandersim.ui.components.LocalHudMotion
 import com.eddiew.commandersim.ui.theme.CommanderSimTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -66,7 +68,7 @@ class ScreenshotTest {
             PreviewDecks.opponents.associate { it.id to DeckRole.OPPONENT }
         runBlocking { vm.seedForPreview(PreviewDecks.all, roles, report) }
 
-        rule.setContent { CommanderSimTheme { App(vm) } }
+        rule.setContent { CompositionLocalProvider(LocalHudMotion provides false) { CommanderSimTheme { App(vm) } } }
         shot("01_decks")
 
         rule.onNodeWithText("SIMULATE").performClick()
@@ -95,7 +97,7 @@ class ScreenshotTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val vm = AppViewModel(app, autoLoad = false)
         runBlocking { vm.seedForPreview(PreviewDecks.all, mapOf(PreviewDecks.krenko.id to DeckRole.CANDIDATE), null) }
-        rule.setContent { CommanderSimTheme { App(vm) } }
+        rule.setContent { CompositionLocalProvider(LocalHudMotion provides false) { CommanderSimTheme { App(vm) } } }
         rule.onNodeWithText("Krenko Goblins").performClick()
         shot("10_deck_detail")
     }
