@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.3.08
+Commanders, checked against real decks from a backup.
+- **Fix: a fake anthem.** Activated or "until end of turn" pumps were read as permanent anthems. Pippin's "Sacrifice four Foods: other creatures get +3/+3 … until end of turn" made every Silly hobbits creature permanently +3/+3, which is why it won 81%. Anthems now come only from always-on text.
+- **Fix: double-faced cards had no rules text.** Scryfall only matches them by their front face, so their text was never downloaded. Fixed. Every deck re-downloads its card data in the background after updating, and the model plays the front face.
+- **Fix:** "Other permanents you control have hexproof" no longer gives the source itself hexproof, so Sigarda can be removed again.
+- **Fix:** "exile target creature card from a graveyard" (The Scarab God) is no longer read as removal.
+- **New mechanics, focused on commanders:**
+  - Beginning-of-combat triggers.
+  - Eminence: works from the command zone.
+  - "Until end of turn" pumps and keyword grants, including "+X/+X where X is its power".
+  - "You may pay {cost}. If you do…".
+  - Explore, and explore twice.
+  - "Put a land from your hand onto the battlefield, or draw".
+  - Per-creature attack and combat-damage triggers ("whenever another Cat attacks", "whenever a Merfolk deals combat damage").
+  - Tribal enter triggers, and "chosen creature type" cards (using the deck's main type).
+  - Lords without "you control", keyword lords ("Horrors you control have menace", "All Rats have fear"), and landwalk.
+  - Token-creature anthems.
+  - Token doublers and Chatterfang's Squirrels; +1/+1 counter doublers and Hardened Scales.
+  - Exalted, fear and intimidate.
+  - Land mana doublers.
+  - Cascade (Maelstrom Wanderer).
+  - Earthbend (Toph).
+  - Mill "that many" on combat damage, and stealing from opponents' graveyards (Captain N'ghathrod).
+  - "Dies → return to hand" and graveyard token copies (The Scarab God).
+  - "Tap N untapped Elves" costs (Lathril's win), "sacrifice a Rat" outlets, exert costs, and ability words before activated abilities (Yuna).
+  - Life-gained-this-turn counters (Lathiel).
+  - Casting from the top of the library.
+- **Commander coverage:** shown first on the deck screen's coverage panel, and flagged in results if partly read.
+
 ## v0.3.07
 Quick model accuracy, round 2. It still plays about 1,700 games a second on one desktop core.
 - **Mana:**

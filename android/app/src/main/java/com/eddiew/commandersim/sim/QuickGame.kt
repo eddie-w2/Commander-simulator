@@ -34,6 +34,9 @@ private const val TREASURE = 64
 internal class QuickDeck(val deck: Deck, val library: List<SimCard>, val commanders: List<SimCard>, val colors: Int) {
     /** Known combos this deck has every piece of. */
     val combos: List<Combo> = Combos.inDeck((library + commanders).map { it.name.substringBefore(" // ").lowercase() }.toSet())
+    /** The deck's most common creature type: what "choose a creature type" cards pick. */
+    val mainTribe: String? = (library + commanders).filter { it.isCreature }.flatMap { it.subtypes }
+        .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
 
     companion object {
         fun from(deck: Deck): QuickDeck {
@@ -52,8 +55,12 @@ private class Perm(val card: SimCard, var sick: Boolean) {
     var bonus = 0
     /** Combat tricks, until end of turn. */
     var temp = 0
-    /** Keywords from attached equipment/auras. */
+    /** Keywords from attached equipment/auras and team-wide effects. */
     var granted = 0
+    /** Keywords until end of turn (pumps). */
+    var tempKw = 0
+    /** Landwalk colours from lords. */
+    var grantedWalk = 0
     /** For equipment and auras: the creature it's on. */
     var attachedTo: Perm? = null
     var loyalty = 4
@@ -61,7 +68,7 @@ private class Perm(val card: SimCard, var sick: Boolean) {
     val power: Int get() = max(0, card.power + counters + bonus + temp)
     val toughness: Int get() = max(1, card.toughness + counters + bonus + temp)
     val token: Boolean get() = card.isToken
-    fun has(bit: Int) = card.has(bit) || granted and bit != 0
+    fun has(bit: Int) = card.has(bit) || (granted or tempKw) and bit != 0
     val flying get() = has(Kw.FLYING)
     val reach get() = has(Kw.REACH)
     val trample get() = has(Kw.TRAMPLE)
@@ -88,6 +95,7 @@ private class Seat(val index: Int, val deck: QuickDeck, rng: Random, seats: Int)
     var foods = 0
     var clues = 0
     var poison = 0
+    var lifeGainedTurn = 0
     var extraTurns = 0
     var extraCombats = 0
     /** Lands drawn so far, opening hand included. */
@@ -137,6 +145,11 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
     private var turnIdx = 0
     /** X paid for the spell resolving now (0 = none). */
     private var castX = 0
+    /** Whose turn it is (their pool pays optional costs; others use their open mana). */
+    private var active: Seat? = null
+    /** The last combat damage to a player, for "that player mills that many". */
+    private var lastDamage = 0
+    private var lastDamaged: Seat? = null
 
     fun play(): GameResult {
         seats.forEach { openingHand(it) }
@@ -240,8 +253,9 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
     private fun takeTurn(p: Seat) {
         val t = (p.track.turnsTaken).coerceAtMost(MAX_TURNS - 1)
         turnIdx = t
+        active = p
         p.track.turnsTaken++
-        for (q in seats) { q.usedOnce.clear(); q.triggerBudget = 40 }
+        for (q in seats) { q.usedOnce.clear(); q.triggerBudget = 40; q.lifeGainedTurn = 0 }
         p.permanents().forEach { it.tapped = false; it.sick = false }
         fire(p, Trigger.UPKEEP)
         if (!p.alive) return
@@ -287,8 +301,7 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
             combat(p)
         }
         p.extraCombats = 0
-        p.creatures.forEach { it.temp = 0 }
-        for (q in seats) q.creatures.forEach { it.temp = 0 }
+        for (q in seats) q.creatures.forEach { it.temp = 0; it.tempKw = 0 }
         if (!p.alive) return
         spendLeftover(p)
         fire(p, Trigger.END_STEP)
@@ -313,10 +326,12 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
 
     private fun refillPool(p: Seat) {
         p.pool.clear()
+        val landExtra = p.nonLands().sumOf { it.card.landManaExtra }
         for (s in p.allSources()) {
             if (s.tapped || (s.card.isCreature && s.sick)) continue
             val color = s.card.produces.takeIf { it != 0 } ?: ManaColor.C
-            val amount = (s.card.manaScale?.let { count(p, it) } ?: 1) * s.card.manaAmount - s.card.manaActivation
+            val extra = if (s.card.isLand) landExtra else 0
+            val amount = (s.card.manaScale?.let { count(p, it) } ?: 1) * s.card.manaAmount - s.card.manaActivation + extra
             repeat(amount.coerceIn(if (s.card.manaActivation > 0) 0 else 1, 30)) { p.pool += color }
         }
         val any = (p.deck.colors and ManaColor.ALL).let { if (it == 0) ManaColor.ALL else it }
@@ -446,6 +461,26 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
     private fun castTriggers(p: Seat, c: SimCard) {
         fire(p, Trigger.CAST_SPELL)
         if (!c.isCreature) fire(p, Trigger.CAST_NONCREATURE)
+        repeat(c.cascade) { if (p.alive) cascade(p, c.mv) }
+    }
+
+    /** Cascade: the first nonland card with lower mana value from the top is cast for free; the rest go to the bottom. */
+    private fun cascade(p: Seat, mv: Int) {
+        val revealed = mutableListOf<SimCard>()
+        while (p.library.isNotEmpty()) {
+            val top = p.library.removeFirst()
+            if (!top.isLand && top.mv < mv) {
+                p.library.addAll(revealed.shuffled(rng))
+                noteCast(p, top)
+                val x = castX
+                castX = 0
+                resolve(p, top)
+                castX = x
+                return
+            }
+            revealed += top
+        }
+        p.library.addAll(revealed)
     }
 
     private fun priority(c: SimCard): Int = when {
@@ -538,7 +573,7 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
             val host = p.creatures.filter { it !== perm && !it.card.isManaSource }.maxByOrNull { it.power + it.toughness }
             if (host != null) perm.attachedTo = host else { p.others.remove(perm); p.graveyard += c; return }
         }
-        if (c.anthem > 0 || perm.attachedTo != null) recalcBonus(p) else if (c.isCreature) perm.bonus = bonusFor(p, perm)
+        if (c.anthem > 0 || perm.attachedTo != null || c.teamGrants != 0 || c.isCreature || c.lordGrants != 0) recalcBonus(p)
         fireCard(p, c, perm, Trigger.ETB)
         // A saga's first chapter and a planeswalker's first activation happen right away.
         if (c.chapters.isNotEmpty()) { perm.chapter = 1; apply(p, c, perm, c.chapters[0]) }
@@ -546,26 +581,37 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
             val up = c.loyalty.maxByOrNull { it.delta }!!
             if (perm.loyalty + up.delta >= 1) { perm.loyalty += up.delta; apply(p, c, perm, up.effects) }
         }
-        if (c.isCreature) fire(p, Trigger.CREATURE_ETB, exclude = perm)
+        if (c.isCreature) fire(p, Trigger.CREATURE_ETB, subject = perm)
         if (c.isArtifact) fire(p, Trigger.ARTIFACT_ETB, exclude = perm)
     }
 
+    /** Whether [c] is of creature type [tribe] ("chosen" = the deck's main type, "token" = any token). */
+    private fun isTribe(p: Seat, c: Perm, tribe: String?): Boolean = when (tribe) {
+        null -> true
+        "token" -> c.token
+        "chosen" -> p.deck.mainTribe != null && p.deck.mainTribe in c.card.subtypes
+        else -> tribe in c.card.subtypes
+    }
+
+    private fun lordApplies(p: Seat, lord: Perm, c: Perm): Boolean {
+        val lt = lord.card.lordType ?: return true
+        return (lt == "token" || lord !== c) && isTribe(p, c, lt)
+    }
+
     private fun bonusFor(p: Seat, c: Perm): Int = p.nonLands().sumOf { a ->
-        val lt = a.card.lordType
         val attached = if (a.attachedTo === c) a.card.buff else 0
-        attached + when {
-            a.card.anthem == 0 -> 0
-            lt == null -> a.card.anthem
-            a !== c && c.card.subtypes.any { it == lt } -> a.card.anthem
-            else -> 0
-        }
+        attached + if (a.card.anthem != 0 && lordApplies(p, a, c)) a.card.anthem else 0
     }
 
     private fun recalcBonus(p: Seat) {
         val attachments = p.others.filter { it.attachedTo != null } + p.rocks.filter { it.attachedTo != null }
+        val teamSources = p.nonLands().filter { it.card.teamGrants != 0 }
         p.creatures.forEach { cr ->
             cr.bonus = bonusFor(p, cr)
-            cr.granted = attachments.filter { it.attachedTo === cr }.fold(0) { m, a -> m or a.card.grants }
+            val team = teamSources.fold(0) { m, a -> if (a === cr && a.card.teamGrantsOthers) m else m or a.card.teamGrants }
+            val lords = p.nonLands().filter { (it.card.lordGrants != 0 || it.card.lordLandwalk != 0) && lordApplies(p, it, cr) }
+            cr.granted = team or lords.fold(0) { m, a -> m or a.card.lordGrants } or attachments.filter { it.attachedTo === cr }.fold(0) { m, a -> m or a.card.grants }
+            cr.grantedWalk = lords.fold(0) { m, a -> m or a.card.lordLandwalk }
         }
     }
 
@@ -580,37 +626,101 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
         ScaleKind.OPPONENTS -> opponents(p).size
         ScaleKind.HAND -> p.hand.size
         ScaleKind.DEVOTION -> p.nonLands().sumOf { perm -> perm.card.cost.pips.count { it and s.color != 0 } }
+        ScaleKind.TOKENS -> p.creatures.count { it.token } + p.treasures + p.foods + p.clues
     }
 
     /** An effect's amount: X is the X paid (or 2), "for each" multiplies. */
     private fun amount(p: Seat, n: Int, scale: Scale?): Int {
-        val base = if (n == XN) (if (castX > 0) castX else 2) else n
+        val base = when (n) { XN -> if (castX > 0) castX else 2; DMG -> lastDamage; LIFE_GAINED -> p.lifeGainedTurn; else -> n }
         return if (scale == null) base else (if (n == XN) 1 else base) * count(p, scale)
     }
 
-    /** Fires [trigger] on every permanent [p] controls (or only [only]). */
-    private fun fire(p: Seat, trigger: Trigger, only: Perm? = null, exclude: Perm? = null) {
+    /** Fires [trigger] on every permanent [p] controls (or only [only]), plus eminence abilities in the command zone. */
+    private fun fire(p: Seat, trigger: Trigger, only: Perm? = null, exclude: Perm? = null, subject: Perm? = null) {
         if (!p.alive) return
         for (perm in (if (only != null) listOf(only) else p.nonLands())) {
             if (perm === exclude) continue
-            fireCard(p, perm.card, perm, trigger)
+            fireCard(p, perm.card, perm, trigger, subject)
             if (!p.alive || p.triggerBudget <= 0) return
         }
+        if (only == null) for (c in p.commandZone.toList()) fireCard(p, c, null, trigger, subject, commandZone = true)
     }
 
-    private fun fireCard(p: Seat, c: SimCard, perm: Perm?, trigger: Trigger) {
+    private fun fireCard(p: Seat, c: SimCard, perm: Perm?, trigger: Trigger, subject: Perm? = null, commandZone: Boolean = false) {
         c.abilities.forEachIndexed { i, a ->
             if (a.trigger != trigger || p.triggerBudget <= 0 || !p.alive) return@forEachIndexed
+            if (commandZone && !a.fromCommandZone) return@forEachIndexed
+            // "Whenever another Cat you control attacks": the attacker must be that type, and not the source itself.
+            if (a.tribe != null && (subject == null || !isTribe(p, subject, a.tribe))) return@forEachIndexed
+            if ((trigger == Trigger.CREATURE_ATTACKS || trigger == Trigger.CREATURE_ETB) && subject != null && subject === perm) return@forEachIndexed
             if (a.oncePerTurn && perm != null && !p.usedOnce.add(perm to i)) return@forEachIndexed
+            a.optionalCost?.let { cost ->
+                val mana = if (active === p) p.pool else p.open
+                if (!payCost(cost, mana, commit = true)) return@forEachIndexed
+            }
             p.triggerBudget--
-            apply(p, c, perm, a.effects)
+            apply(p, c, perm, a.effects, subject)
         }
     }
 
-    private fun apply(p: Seat, src: SimCard, perm: Perm?, effects: List<Effect>) {
+    private fun apply(p: Seat, src: SimCard, perm: Perm?, effects: List<Effect>, subject: Perm? = null) {
         for (e in effects) {
             if (!p.alive) return
             when (e) {
+                is Pump -> {
+                    val targets = when (e.target) {
+                        PumpTarget.SELF -> listOfNotNull(perm?.takeIf { it in p.creatures })
+                        PumpTarget.TRIGGERING -> listOfNotNull(subject?.takeIf { it in p.creatures })
+                        PumpTarget.ALL -> p.creatures.filter { isTribe(p, it, e.tribe) }
+                        PumpTarget.ANOTHER -> listOfNotNull(p.creatures.filter { it !== perm && isTribe(p, it, e.tribe) }
+                            .maxByOrNull { (if (!it.sick && !it.tapped) 100 else 0) + it.power })
+                    }
+                    targets.forEach { t ->
+                        if (e.doublePower) t.temp += t.power else t.temp += e.power
+                        t.tempKw = t.tempKw or e.keywords
+                    }
+                }
+                is Explore -> {
+                    val who = when (e.who) {
+                        ExploreWho.SELF -> listOfNotNull(perm?.takeIf { it in p.creatures })
+                        ExploreWho.TRIGGERING -> listOfNotNull(subject?.takeIf { it in p.creatures })
+                        ExploreWho.TRIBE -> p.creatures.filter { isTribe(p, it, e.tribe) }
+                        ExploreWho.ALL -> p.creatures.toList()
+                    }
+                    val times = if (p.nonLands().any { it.card.exploreTwice }) 2 else 1
+                    who.forEach { c -> repeat(times) { explore(p, c) } }
+                }
+                is LandFromHand -> {
+                    val land = p.hand.filter { it.isLand }.maxByOrNull { Integer.bitCount(it.produces) }
+                    if (land != null) {
+                        p.hand.remove(land)
+                        p.lands += Perm(land, sick = false).also { it.tapped = land.entersTapped }
+                        if (!land.entersTapped && active === p) p.pool += (land.produces.takeIf { it != 0 } ?: ManaColor.C)
+                        fire(p, Trigger.LANDFALL)
+                    } else if (e.elseDraw) draw(p, 1)
+                }
+                TopOfLibrary -> if (rng.nextBoolean()) draw(p, 1)
+                ReturnToHand -> if (p.graveyard.remove(src)) p.hand += src
+                is GraveyardCopy -> {
+                    val pick = seats.flatMap { q -> q.graveyard.filter { it.isCreature }.map { q to it } }.maxByOrNull { (_, c) -> c.mv * 2 + c.power + c.abilities.size * 2 }
+                    if (pick != null) {
+                        pick.first.graveyard.remove(pick.second)
+                        enter(p, Perm(pick.second.copiedBy(src, token = true, e.power, e.toughness, e.tribe), sick = !pick.second.haste))
+                    }
+                }
+                StealFromGraveyard -> {
+                    val pick = opponents(p).flatMap { q -> q.graveyard.filter { it.isCreature || it.isArtifact }.map { q to it } }
+                        .maxByOrNull { (_, c) -> c.mv * 2 + c.power }
+                    if (pick != null) { pick.first.graveyard.remove(pick.second); enter(p, Perm(pick.second, sick = !pick.second.haste)) }
+                }
+                is Earthbend -> {
+                    val land = p.lands.filter { it.card.earthbentFrom == null }.minByOrNull { Integer.bitCount(it.card.produces) }
+                    if (land != null) {
+                        p.lands.remove(land)
+                        enter(p, Perm(land.card.earthbent(), sick = false).also { it.tapped = land.tapped })
+                        p.creatures.lastOrNull()?.let { addCounters(p, it, amount(p, e.n, null)) }
+                    }
+                }
                 is MakeTokens -> makeTokens(p, src, e.copy(count = amount(p, e.count, e.scale).coerceAtMost(20)))
                 is Draw -> draw(p, amount(p, e.n, e.scale).coerceAtMost(10))
                 is GainLife -> gainLife(p, amount(p, e.n, e.scale))
@@ -638,14 +748,17 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
                 is Counters -> {
                     val k = amount(p, e.n, e.scale)
                     when {
-                        e.all -> p.creatures.forEach { it.counters += k }
-                        e.self && perm != null && perm.card.isCreature -> perm.counters += k
-                        else -> p.creatures.maxByOrNull { it.power }?.let { it.counters += k }
+                        // "Distribute that many counters": spread over your best creatures.
+                        e.n == LIFE_GAINED -> p.creatures.filter { it !== perm }.sortedByDescending { it.power }.take(k).forEach { addCounters(p, it, 1) }
+                        e.all -> p.creatures.forEach { addCounters(p, it, k) }
+                        e.self && perm != null && perm.card.isCreature -> addCounters(p, perm, k)
+                        else -> p.creatures.maxByOrNull { it.power }?.let { addCounters(p, it, k) }
                     }
                 }
                 is Mill -> {
                     val k = amount(p, e.n, null)
                     when (e.target) {
+                        MillTarget.DAMAGED -> lastDamaged?.let { mill(it, k) }
                         MillTarget.SELF -> mill(p, k)
                         MillTarget.EACH_OPPONENT -> opponents(p).forEach { mill(it, k) }
                         MillTarget.OPPONENT -> opponents(p).minByOrNull { it.library.size }?.let { mill(it, k) }
@@ -698,19 +811,57 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
         }
     }
 
-    private fun gainLife(p: Seat, n: Int) { p.life += n; p.track.lifeGained += n }
+    private fun gainLife(p: Seat, n: Int) { p.life += n; p.track.lifeGained += n; p.lifeGainedTurn += n }
+
+    /** +1/+1 counters, with Hardened Scales (+1) and doublers (×2) applied. */
+    private fun addCounters(p: Seat, c: Perm, k: Int) {
+        if (k <= 0) return
+        var n = k
+        p.nonLands().forEach { n += it.card.counterPlus }
+        p.nonLands().forEach { n *= it.card.counterMultiplier }
+        c.counters += n.coerceAtMost(40)
+    }
+
+    /** Explore: a land goes to hand; otherwise the creature gets a +1/+1 counter (the card stays on top or is binned). */
+    private fun explore(p: Seat, c: Perm) {
+        val top = p.library.firstOrNull() ?: return
+        if (top.isLand) {
+            draw(p, 1)
+        } else {
+            addCounters(p, c, 1)
+            if (top.mv > p.lands.size + 2) p.graveyard += p.library.removeFirst()
+        }
+        if (p.alive) fire(p, Trigger.EXPLORES, subject = c)
+    }
 
     private fun makeTokens(p: Seat, src: SimCard, t: MakeTokens) {
         when (t.kind) {
             TokenKind.CREATURE -> {
                 val card = SimCard.token(t, src)
-                repeat(t.count.coerceAtMost(10)) { if (p.alive) enter(p, Perm(card, sick = !card.haste)) }
-                p.track.tokens += t.count
+                val n = (t.count * tokenMultiplier(p)).coerceAtMost(20)
+                repeat(n) { if (p.alive) enter(p, Perm(card, sick = !card.haste)) }
+                p.track.tokens += n
+                squirrels(p, n)
             }
-            TokenKind.TREASURE -> { p.treasures += t.count; p.track.tokens += t.count; fire(p, Trigger.ARTIFACT_ETB) }
-            TokenKind.FOOD -> { p.foods += t.count; p.track.tokens += t.count; fire(p, Trigger.ARTIFACT_ETB) }
-            TokenKind.CLUE -> { p.clues += t.count; p.track.tokens += t.count; fire(p, Trigger.ARTIFACT_ETB) }
+            TokenKind.TREASURE, TokenKind.FOOD, TokenKind.CLUE -> {
+                val n = (t.count * tokenMultiplier(p)).coerceAtMost(20)
+                when (t.kind) { TokenKind.TREASURE -> p.treasures += n; TokenKind.FOOD -> p.foods += n; else -> p.clues += n }
+                p.track.tokens += n
+                fire(p, Trigger.ARTIFACT_ETB)
+                squirrels(p, n)
+            }
         }
+    }
+
+    private fun tokenMultiplier(p: Seat): Int =
+        p.nonLands().fold(1) { m, perm -> m * perm.card.tokenMultiplier }.coerceAtMost(8)
+
+    /** Chatterfang: every batch of tokens brings that many 1/1 Squirrels. */
+    private fun squirrels(p: Seat, n: Int) {
+        val chatter = p.nonLands().firstOrNull { it.card.extraSquirrels } ?: return
+        val squirrel = SimCard.token(MakeTokens(1, TokenKind.CREATURE, "Squirrel", 1, 1), chatter.card)
+        repeat(n.coerceAtMost(10)) { if (p.alive) { p.creatures += Perm(squirrel, sick = true).also { it.bonus = bonusFor(p, it) } } }
+        p.track.tokens += n
     }
 
     /** After combat: activated abilities, Clues and Food with the mana that's left (keeping any held-up mana). */
@@ -718,15 +869,20 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
         val reserve = p.hand.filter { isHeld(it) }.minByOrNull { it.mv }?.cost?.total ?: 0
         for (perm in p.nonLands()) {
             for (a in perm.card.activated) {
+                if (a.effects.all { it is Pump }) continue
                 var uses = if (a.tap || a.sacrificeSelf) 1 else 2
                 while (uses-- > 0 && p.alive) {
                     if (a.tap && (perm.tapped || (perm.card.isCreature && perm.sick))) break
                     if (perm !in p.creatures && perm !in p.others && perm !in p.rocks) break
                     // Sacrifice outlets only eat small tokens, never real cards.
-                    val fodder = if (a.sacrificeCreature) p.creatures.filter { it.token && it.power <= 2 && it !== perm }.minByOrNull { it.power } ?: break else null
+                    val fodder = if (a.sacrificeCreature) p.creatures.filter { it.token && it.power <= 2 && it !== perm && isTribe(p, it, a.sacrificeTribe) }
+                        .minByOrNull { it.power } ?: break else null
+                    val tappers = if (a.tapCreatures > 0) p.creatures.filter { !it.tapped && it !== perm && isTribe(p, it, a.tapTribe) }
+                        .sortedBy { it.power }.take(a.tapCreatures).takeIf { it.size == a.tapCreatures } ?: break else emptyList()
                     if (p.pool.size - a.cost.total < reserve || !payCost(a.cost, p.pool, commit = true)) break
                     if (a.tap) perm.tapped = true
                     if (fodder != null) { p.track.sacrificed++; die(p, fodder, null, perm.card) }
+                    tappers.forEach { it.tapped = true }
                     apply(p, perm.card, perm, a.effects)
                     if (a.sacrificeSelf) { die(p, perm, null, perm.card); break }
                 }
@@ -955,6 +1111,7 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
             owner.track.creaturesLost++
         }
         when {
+            victim.card.earthbentFrom != null -> owner.lands += Perm(victim.card.earthbentFrom, sick = false).also { it.tapped = true }
             victim.token -> Unit
             victim.card.isCommander -> { if (byOpponent != null) owner.track.cmdRemoved++; owner.commandZone += victim.card }
             toGraveyard -> owner.graveyard += victim.card
@@ -968,7 +1125,7 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
                 if (att.card.isAura) { owner.others.remove(att); owner.graveyard += att.card }
             }
         }
-        if (victim.card.anthem > 0 || attachmentsChanged) recalcBonus(owner)
+        if (victim.card.anthem > 0 || victim.card.teamGrants != 0 || attachmentsChanged) recalcBonus(owner)
         return true
     }
 
@@ -1010,13 +1167,31 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
 
     // ───────────────────────────── Combat ─────────────────────────────
 
+    /** Lands each player controls, as colours (for landwalk). */
+    private fun landColors(q: Seat) = q.lands.fold(0) { m, l -> m or l.card.produces }
+
     private fun canBlock(b: Perm, a: Perm): Boolean =
-        !b.tapped && !b.has(Kw.CANT_BLOCK) && !a.unblockable && (!a.flying || b.flying || b.reach)
+        !b.tapped && !b.has(Kw.CANT_BLOCK) && !a.unblockable && (!a.flying || b.flying || b.reach) &&
+            ((a.card.landwalk or a.grantedWalk) and blockingLands == 0) &&
+            (!a.has(Kw.FEAR) || b.card.isArtifact || b.card.cost.pips.any { it and ManaColor.B != 0 })
+
+    /** The defending player's land colours during the current combat. */
+    private var blockingLands = 0
 
     private fun evasive(a: Perm, blockers: List<Perm>) =
         blockers.none { canBlock(it, a) } || (a.menace && blockers.count { canBlock(it, a) } < 2)
 
     private fun combat(p: Seat) {
+        // Beginning of combat (eminence and the like), before attackers are chosen.
+        fire(p, Trigger.COMBAT_START)
+        if (!p.alive) return
+        // Pump and evasion abilities ("{T}: target Merfolk can't be blocked") are used now, not after combat.
+        for (perm in p.nonLands()) for (a in perm.card.activated) {
+            if (a.effects.none { it is Pump } || (a.tap && (perm.tapped || (perm.card.isCreature && perm.sick)))) continue
+            if (!payCost(a.cost, p.pool, commit = true)) continue
+            if (a.tap) perm.tapped = true
+            apply(p, perm.card, perm, a.effects)
+        }
         val ready = p.creatures.filter {
             !it.sick && !it.tapped && it.power > 0 && !it.has(Kw.DEFENDER) && !(it.card.isManaSource && it.power <= 1)
         }
@@ -1032,6 +1207,7 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
         val defender = opps.firstOrNull { q -> through(q) >= q.life }
             ?: opps.maxByOrNull { q -> through(q) * 4 - q.life + threat(q) / 3 + rng.nextInt(6) }
             ?: return
+        blockingLands = landColors(defender)
         val blockers = blockersOf(defender).toMutableList()
         // Keep blockers home when the table could kill us on the crack-back.
         val incoming = opps.maxOf { q -> q.creatures.filter { !it.has(Kw.DEFENDER) }.sumOf { it.power } }
@@ -1045,8 +1221,13 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
         if (attackers.isEmpty()) return
         p.track.attacks++
         p.track.attackersTotal += attackers.size
+        // Exalted: a lone attacker gets +1/+1 for each exalted permanent.
+        if (attackers.size == 1) p.nonLands().count { it.has(Kw.EXALTED) }.takeIf { it > 0 }?.let { attackers[0].temp += it }
         fire(p, Trigger.ATTACK)
-        attackers.toList().forEach { if (p.alive) fire(p, Trigger.SELF_ATTACK, only = it) }
+        attackers.toList().forEach {
+            if (p.alive) fire(p, Trigger.SELF_ATTACK, only = it)
+            if (p.alive) fire(p, Trigger.CREATURE_ATTACKS, subject = it)
+        }
         attackers.forEach { if (!it.has(Kw.VIGILANCE)) it.tapped = true }
         attackers.retainAll { it in p.creatures }
         if (!p.alive || !defender.alive) return
@@ -1141,6 +1322,8 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
     /** Combat damage to a player: life (or poison with infect), toxic, and "deals combat damage to a player" triggers. */
     private fun hitPlayer(p: Seat, a: Perm, defender: Seat, dmg: Int) {
         if (dmg <= 0 || !defender.alive) return
+        lastDamage = dmg
+        lastDamaged = defender
         if (a.has(Kw.INFECT)) {
             val ct = p.track.card(a.card.name)
             ct.damage += dmg; ct.combatDamage += dmg
@@ -1150,6 +1333,7 @@ internal class QuickGame(private val decks: List<QuickDeck>, private val rng: Ra
         }
         if (a.card.toxic > 0) poison(p, defender, a.card.toxic, a.card)
         if (p.alive) fireCard(p, a.card, a, Trigger.COMBAT_DAMAGE)
+        if (p.alive) fire(p, Trigger.CREATURE_COMBAT_DAMAGE, subject = a)
     }
 
     private fun eliminate(p: Seat, cause: EndCondition, by: String?) {
@@ -1186,6 +1370,9 @@ internal class QuickGamePlayer : GamePlayer {
         }
         if (lines.isNotEmpty()) add("Quick model card coverage (fully read / non-land cards): " +
             lines.joinToString(" · ") { (d, full, all) -> "${d.deck.name} $full/$all" } + ". See each deck's screen for what's skipped.")
+        decks.flatMap { d -> d.commanders.filter { it.coverage.status != Coverage.Status.FULL }.map { d to it } }.forEach { (d, c) ->
+            add("Check: ${d.deck.name}'s commander ${c.name} is only partly read by the quick model (${c.coverage.missed.size} line${if (c.coverage.missed.size == 1) "" else "s"} skipped; see the deck screen).")
+        }
         lines.filter { (_, full, all) -> all >= 20 && full < all * 0.6 }.forEach { (d, full, all) ->
             add("Check: the quick model only fully reads $full of ${d.deck.name}'s $all non-land cards, so its results for that deck are rough.")
         }

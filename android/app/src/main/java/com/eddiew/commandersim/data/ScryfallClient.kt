@@ -46,7 +46,8 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
         for (chunk in names.distinct().chunked(75)) {
             val body = buildJsonObject {
                 put("identifiers", buildJsonArray {
-                    chunk.forEach { add(buildJsonObject { put("name", it) }) }
+                    // Double-faced cards are only found by their front face name.
+                    chunk.map { it.substringBefore(" // ").trim() }.distinct().forEach { add(buildJsonObject { put("name", it) }) }
                 })
             }.toString()
             val response = post("https://api.scryfall.com/cards/collection", body)
@@ -70,8 +71,9 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
         val cmc = obj["cmc"]?.jsonPrimitive?.doubleOrNull
         val identity = obj["color_identity"]?.jsonArray?.joinToString("") { it.jsonPrimitive.content } ?: ""
         val faces = obj["card_faces"]?.jsonArray?.map { it.jsonObject } ?: emptyList()
+        // Faces are kept apart with a "//" line so the quick model can play the front face.
         val oracle = (listOfNotNull(obj["oracle_text"]?.jsonPrimitive?.contentOrNull) +
-            faces.mapNotNull { it["oracle_text"]?.jsonPrimitive?.contentOrNull }).joinToString("\n")
+            faces.mapNotNull { it["oracle_text"]?.jsonPrimitive?.contentOrNull }).joinToString("\n//\n")
         val keywords = obj["keywords"]?.jsonArray?.map { it.jsonPrimitive.content.lowercase() } ?: emptyList()
         val front = typeLine?.substringBefore("//") ?: ""
         val canLead = ("Legendary" in front && "Creature" in front) || oracle.contains("can be your commander", ignoreCase = true)
@@ -145,7 +147,7 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
         val unique = names.distinct()
         for ((tag, role) in TAGS) {
             for (chunk in unique.chunked(25)) {
-                val q = "otag:$tag (" + chunk.joinToString(" or ") { "!\"" + it.replace("\"", "") + "\"" } + ")"
+                val q = "otag:$tag (" + chunk.joinToString(" or ") { "!\"" + it.substringBefore(" // ").replace("\"", "") + "\"" } + ")"
                 var url: String? = "https://api.scryfall.com/cards/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")
                 var pages = 0
                 while (url != null && pages < 3) {

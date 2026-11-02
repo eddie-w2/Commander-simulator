@@ -55,8 +55,11 @@ data class Deck(
         }
 }
 
-/** Current card data level: 2 = mana costs, produced mana, rules text and functional tags. */
-const val CARD_DATA_LEVEL = 2
+/**
+ * Current card data level: 2 = mana costs, produced mana, rules text and functional tags; 3 = double-faced cards'
+ * text too (looked up by front face).
+ */
+const val CARD_DATA_LEVEL = 3
 
 /** Cards removed and added going from [base] to [variant], by name (quantities included). */
 data class DeckDiff(val removed: List<DeckCard>, val added: List<DeckCard>)

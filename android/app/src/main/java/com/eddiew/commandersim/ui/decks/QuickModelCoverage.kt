@@ -59,6 +59,18 @@ fun QuickModelCoverage(deck: Deck) {
         Text("The quick model reads each card's rules text into triggers, abilities and effects. Text it can't read is " +
             "left out of its games (Forge plays every card fully). Tap a card to see what was read.",
             style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+        // The commander is always available, so how well it's read matters most: shown first, in full.
+        cards.filter { it.isCommander }.forEach { c ->
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("◆ ${c.name}", style = MaterialTheme.typography.bodyMedium, color = Hud.Cyan, modifier = Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(c.coverage.status.label.uppercase(), style = MaterialTheme.typography.labelSmall,
+                    color = when (c.coverage.status) { Coverage.Status.FULL -> Hud.Positive; Coverage.Status.PARTIAL -> Hud.Warn; else -> Hud.Negative })
+            }
+            c.describe().forEach { Text("✓ $it", style = MaterialTheme.typography.labelSmall, color = Hud.Ice, modifier = Modifier.padding(top = 3.dp)) }
+            c.coverage.missed.forEach { Text("✗ $it", style = MaterialTheme.typography.labelSmall, color = Hud.Dim, modifier = Modifier.padding(top = 3.dp)) }
+        }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             HudChip("Partly", filter == Coverage.Status.PARTIAL, { filter = Coverage.Status.PARTIAL }, color = Hud.Warn)
@@ -66,7 +78,7 @@ fun QuickModelCoverage(deck: Deck) {
             HudChip("All", filter == null, { filter = null }, color = Hud.Muted)
         }
         Spacer(Modifier.height(6.dp))
-        val shown = cards.filter { filter == null || it.coverage.status == filter }.sortedBy { it.name }
+        val shown = cards.filter { !it.isCommander && (filter == null || it.coverage.status == filter) }.sortedBy { it.name }
         if (shown.isEmpty()) Text("None.", style = MaterialTheme.typography.bodySmall, color = Hud.Dim)
         shown.forEach { c ->
             val expanded = open == c.name

@@ -224,5 +224,52 @@ class QuickModelTest {
             assertEquals(0, d.outcome.winConditions.firstOrNull { it.condition == com.eddiew.commandersim.data.model.EndCondition.ALT_WIN }?.count ?: 0)
         }
     }
+
+    @Test
+    fun `commanders from real decks are read correctly`() {
+        // Pippin's +3/+3 is an activated, until-end-of-turn effect, not an anthem (it made Silly hobbits win 81%).
+        val pippin = sim("Pippin, Warden of Isengard", "Legendary Creature — Halfling Advisor", "{B}{G}",
+            "Partner with Merry, Warden of Isengard\n{1}, {T}: Create a Food token.\n{T}, Sacrifice four Foods: Other creatures you control get +3/+3 and gain haste until end of turn. Activate only as a sorcery.",
+            p = "2", t = "2")
+        assertEquals(0, pippin.anthem)
+        val hakbal = sim("Hakbal of the Surging Soul", "Legendary Creature — Merfolk Scout", "{2}{G}{U}",
+            "At the beginning of combat on your turn, each Merfolk creature you control explores. (Reveal the top card of your library. Put that card into your hand if it's a land. Otherwise, put a +1/+1 counter on that creature, then put the card back or put it into your graveyard.)\nWhenever Hakbal attacks, you may put a land card from your hand onto the battlefield. If you don't, draw a card.",
+            p = "3", t = "3")
+        assertEquals(Coverage.Status.FULL, hakbal.coverage.status)
+        assertEquals(Trigger.COMBAT_START, hakbal.abilities[0].trigger)
+        assertEquals(com.eddiew.commandersim.sim.Explore(com.eddiew.commandersim.sim.ExploreWho.TRIBE, "merfolk"), hakbal.abilities[0].effects.single())
+        assertEquals(com.eddiew.commandersim.sim.LandFromHand(elseDraw = true), hakbal.abilities[1].effects.single())
+        val arahbo = sim("Arahbo, Roar of the World", "Legendary Creature — Cat Avatar", "{3}{G}{W}",
+            "Eminence — At the beginning of combat on your turn, if Arahbo, Roar of the World is in the command zone or on the battlefield, another target Cat you control gets +3/+3 until end of turn.\nWhenever another Cat you control attacks, you may pay {1}{G}{W}. If you do, it gains trample and gets +X/+X until end of turn, where X is its power.",
+            p = "5", t = "5")
+        assertTrue(arahbo.abilities[0].fromCommandZone)
+        assertEquals(com.eddiew.commandersim.sim.Pump(3, 3, com.eddiew.commandersim.sim.PumpTarget.ANOTHER, "cat"), arahbo.abilities[0].effects.single())
+        assertEquals(Trigger.CREATURE_ATTACKS, arahbo.abilities[1].trigger)
+        assertEquals("cat", arahbo.abilities[1].tribe)
+        assertEquals(3, arahbo.abilities[1].optionalCost?.total)
+        val scarab = sim("The Scarab God", "Legendary Creature — Zombie God", "{3}{U}{B}",
+            "At the beginning of your upkeep, each opponent loses X life and you scry X, where X is the number of Zombies you control.\n{2}{U}{B}: Exile target creature card from a graveyard. Create a token that's a copy of it, except it's a 4/4 black Zombie.\nWhen The Scarab God dies, return it to its owner's hand at the beginning of the next end step.",
+            p = "5", t = "5")
+        assertTrue("graveyard exile isn't removal", com.eddiew.commandersim.sim.Role.REMOVAL !in scarab.roles)
+        assertEquals(Coverage.Status.FULL, scarab.coverage.status)
+        val lathril = sim("Lathril, Blade of the Elves", "Legendary Creature — Elf Noble", "{2}{B}{G}",
+            "Menace\nWhenever Lathril deals combat damage to a player, create that many 1/1 green Elf Warrior creature tokens.\n{T}, Tap ten untapped Elves you control: Each opponent loses 10 life and you gain 10 life.",
+            p = "2", t = "3", kw = listOf("Menace"))
+        assertEquals(com.eddiew.commandersim.sim.DMG, (lathril.abilities.single().effects.single() as MakeTokens).count)
+        assertEquals(10, lathril.activated.single().tapCreatures)
+        assertEquals("elf", lathril.activated.single().tapTribe)
+        val wanderer = sim("Maelstrom Wanderer", "Legendary Creature — Elemental", "{5}{U}{R}{G}", "Creatures you control have haste.\nCascade, cascade", p = "7", t = "5", kw = listOf("Cascade"))
+        assertEquals(2, wanderer.cascade)
+        assertTrue(wanderer.teamGrants and Kw.HASTE != 0)
+        val gnawer = sim("Marrow-Gnawer", "Legendary Creature — Rat Rogue", "{3}{B}{B}",
+            "All Rats have fear.\n{T}, Sacrifice a Rat: Create X 1/1 black Rat creature tokens, where X is the number of Rats you control.", p = "2", t = "3")
+        assertEquals("rat", gnawer.lordType)
+        assertTrue(gnawer.lordGrants and Kw.FEAR != 0)
+        assertEquals("rat", gnawer.activated.single().sacrificeTribe)
+        val tergrid = SimCard.from(card("Tergrid, God of Fright // Tergrid's Lantern", "Legendary Creature — God // Legendary Artifact", "{3}{B}{B}",
+            "Menace\nWhenever an opponent sacrifices a nontoken permanent or discards a permanent card, you may put that card onto the battlefield under your control from their graveyard.\n//\n{T}: Target player loses 3 life unless they sacrifice a nonland permanent or discard a card.",
+            p = "4", t = "5", kw = listOf("Menace")), ManaColor.B)
+        assertTrue("front face only", tergrid.activated.isEmpty())
+    }
 }
 

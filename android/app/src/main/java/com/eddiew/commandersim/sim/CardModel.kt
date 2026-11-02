@@ -129,6 +129,30 @@ class SimCard(
     val toxic: Int = 0,
     val loyalty: List<Loyalty> = emptyList(),
     val chapters: List<List<Effect>> = emptyList(),
+    /** Keywords given to every creature you control ("other permanents you control have hexproof"). */
+    val teamGrants: Int = 0,
+    /** [teamGrants] are for "other" creatures only (not this one). */
+    val teamGrantsOthers: Boolean = false,
+    /** Token doublers multiply tokens you create (Parallel Lives = 2). */
+    val tokenMultiplier: Int = 1,
+    /** "Those tokens plus that many 1/1 Squirrels" (Chatterfang). */
+    val extraSquirrels: Boolean = false,
+    /** Keywords a lord gives its creature type ("other Merfolk get +1/+1 and have islandwalk"). */
+    val lordGrants: Int = 0,
+    /** Landwalk colours this creature has (islandwalk = blue): unblockable against players with such a land. */
+    val landwalk: Int = 0,
+    val lordLandwalk: Int = 0,
+    /** +1/+1 counter modifiers: Hardened Scales (+1), Branching Evolution / Doubling Season (×2). */
+    val counterPlus: Int = 0,
+    val counterMultiplier: Int = 1,
+    /** "Explores, then explores again." */
+    val exploreTwice: Boolean = false,
+    /** Extra mana each land makes when tapped (Mirari's Wake, Zendikar Resurgent). */
+    val landManaExtra: Int = 0,
+    /** Number of cascade instances. */
+    val cascade: Int = 0,
+    /** For an earthbent land: the land card it returns as. */
+    val earthbentFrom: SimCard? = null,
 ) {
     val isLand: Boolean get() = Role.LAND in roles
     val isManaSource: Boolean get() = produces != 0 && (Role.LAND in roles || Role.ROCK in roles || Role.DORK in roles)
@@ -152,17 +176,28 @@ class SimCard(
     val menace get() = has(Kw.MENACE)
 
     /** This creature as copied by [via]: a token copy, or the clone card itself. Never a commander. */
-    fun copiedBy(via: SimCard, token: Boolean): SimCard = SimCard(
+    fun copiedBy(via: SimCard, token: Boolean, asPower: Int = 0, asToughness: Int = 0, extraType: String? = null): SimCard = SimCard(
         name = if (token) "$name token copy (${via.name})" else "${via.name} (as $name)",
-        type = type, cost = cost, mv = mv, roles = roles, produces = produces, entersTapped = false, power = power, toughness = toughness,
+        type = CardType.CREATURE.takeIf { asPower > 0 } ?: type, cost = cost, mv = mv, roles = roles, produces = produces, entersTapped = false,
+        power = if (asPower > 0) asPower else power, toughness = if (asToughness > 0) asToughness else toughness,
         keywords = keywords, anthem = anthem, lordType = lordType, buff = buff, draws = draws, damage = damage, tokenPower = tokenPower,
-        isCommander = false, subtypes = subtypes, removalKind = removalKind, removalDamage = removalDamage,
+        isCommander = false, subtypes = subtypes + listOfNotNull(extraType), removalKind = removalKind, removalDamage = removalDamage,
         recursionToBattlefield = recursionToBattlefield,
         // A copy keeps everything except abilities that would copy again.
         abilities = abilities.filter { a -> a.effects.none { it is CopyCreature } }, activated = activated, coverage = coverage,
         madeBy = if (token) via.name else null,
         manaAmount = manaAmount, manaScale = manaScale, manaActivation = manaActivation, tutor = tutor, pump = pump, equipCost = equipCost,
         grants = grants, isAura = isAura, reduceFor = reduceFor, reduceBy = reduceBy, toxic = toxic, loyalty = loyalty, chapters = chapters,
+        teamGrants = teamGrants, teamGrantsOthers = teamGrantsOthers, tokenMultiplier = tokenMultiplier, extraSquirrels = extraSquirrels,
+        lordGrants = lordGrants, landwalk = landwalk, lordLandwalk = lordLandwalk, counterPlus = counterPlus, counterMultiplier = counterMultiplier,
+        exploreTwice = exploreTwice, landManaExtra = landManaExtra, cascade = cascade,
+    )
+
+    /** This land animated by earthbend: a 0/0 haste creature that still taps for mana. */
+    fun earthbent(): SimCard = SimCard(
+        name = "$name (earthbent)", type = CardType.CREATURE, cost = ManaCost.FREE, mv = 0, roles = setOf(Role.CREATURE, Role.DORK),
+        produces = produces, entersTapped = false, power = 0, toughness = 0, keywords = Kw.HASTE, anthem = 0, buff = 0, draws = 0,
+        damage = 0, tokenPower = 0, isCommander = false, subtypes = setOf("land"), earthbentFrom = this,
     )
 
     /** True when some parsed ability or activation has an effect of this type. */
@@ -174,6 +209,16 @@ class SimCard(
         if (isCreature) add("${power}/${toughness} creature" + Kw.names(keywords).takeIf { it.isNotEmpty() }?.joinToString(", ", " · ").orEmpty())
         if (isManaSource && !isLand) add("mana: ${ManaColor.letters(produces).ifEmpty { "C" }}")
         if (anthem > 0) add("+$anthem/+$anthem to ${lordType?.let { "${it}s" } ?: "creatures"} you control")
+        if (teamGrants != 0) add("your creatures have " + Kw.names(teamGrants).joinToString(", "))
+        if (tokenMultiplier > 1) add("token doubler (×$tokenMultiplier)")
+        if (extraSquirrels) add("each token you make brings a 1/1 Squirrel")
+        if (lordGrants != 0 || lordLandwalk != 0) add("${lordType ?: "creature"}s get " + (Kw.names(lordGrants) + (if (lordLandwalk != 0) listOf("landwalk") else emptyList())).joinToString(", "))
+        if (landwalk != 0) add("landwalk (${ManaColor.letters(landwalk)})")
+        if (counterPlus > 0) add("+1/+1 counters: one extra")
+        if (counterMultiplier > 1) add("+1/+1 counters: ×$counterMultiplier")
+        if (exploreTwice) add("explore twice")
+        if (landManaExtra > 0) add("lands make +$landManaExtra mana")
+        if (cascade > 0) add("cascade ×$cascade")
         if (buff > 0) add("+$buff power to one creature")
         if (manaAmount > 1 || manaScale != null) add("makes ${manaAmount}${manaScale?.describe().orEmpty()} mana" + if (manaActivation > 0) " (costs $manaActivation)" else "")
         roles.filter { it in setOf(Role.RAMP_LAND, Role.REMOVAL, Role.WIPE, Role.COUNTER, Role.PROTECTION, Role.RECURSION) }
@@ -199,7 +244,7 @@ class SimCard(
             pattern.find(text)?.groupValues?.getOrNull(1)?.lowercase()?.let { numberWords[it] ?: it.toIntOrNull() }
 
         private val wipeRx = Regex("(destroy|exile) all |(destroy|exile) each |all creatures get -\\d+/-\\d+|return all nonland permanents")
-        private val removalRx = Regex("(destroy|exile) (target|up to (one|two) target)|deals? \\d+ damage to (any target|target creature)|return target (nonland )?(creature|permanent) to its owner's hand|target (creature|player)'s owner shuffles|target creature( an opponent controls| you don't control)? gets -\\d+/-\\d+|fights (target|up to one target|another target) creature")
+        private val removalRx = Regex("(destroy|exile) (target|up to (one|two) target)(?![a-z ]*card)|deals? \\d+ damage to (any target|target creature)|return target (nonland )?(creature|permanent) to its owner's hand|target (creature|player)'s owner shuffles|target creature( an opponent controls| you don't control)? gets -\\d+/-\\d+|fights (target|up to one target|another target) creature")
         private val counterRx = Regex("counter target (spell|noncreature spell|creature spell|activated)")
         private val rampRx = Regex("search your library for (up to (one|two|three) )?(a |an )?(basic )?lands? cards?.{0,80}(onto|put (it|them) onto) the battlefield")
         private val tutorRx = Regex("search your library for (a|an|up to one) ([a-z, ]*?)\\bcards?\\b")
@@ -225,7 +270,9 @@ class SimCard(
             return TutorSpec(types, maxMv, dest)
         }
         private val pumpRx = Regex("target creature gets \\+(\\d+)/\\+(\\d+) until end of turn")
-        private val reduceRx = Regex("(creature |artifact |noncreature |instant and sorcery |instant or sorcery |enchantment )?spells you cast cost \\{(\\d+)\\} less")
+        private val reduceRx = Regex("(creature |artifact |noncreature |instant and sorcery |instant or sorcery |enchantment )?spells (?:you cast )?(?:of the chosen type )?cost \\{(\\d+)\\} less")
+        private val walkWords = mapOf("islandwalk" to ManaColor.U, "forestwalk" to ManaColor.G, "swampwalk" to ManaColor.B, "mountainwalk" to ManaColor.R, "plainswalk" to ManaColor.W)
+        private fun walks(text: String) = walkWords.entries.fold(0) { m, (w, c) -> if (w in text) m or c else m }
         val protectionRx = listOf(
             Regex("""(creatures|permanents|artifacts|other creatures) you control (gain|have|get)[^.]{0,60}(hexproof|indestructible|shroud|protection|ward)"""),
             Regex("""target (creature|permanent|artifact|commander)( or [a-z]+)?( you control)? (gains|has|gets)[^.]{0,60}(hexproof|indestructible|shroud|protection)"""),
@@ -239,7 +286,7 @@ class SimCard(
             Regex("""(put|return)[^.]{0,60}from (your|a|any) graveyard onto the battlefield"""),
             Regex("""return (target|up to [a-z]+ target|all|each)[^.]{0,40}cards? from your graveyard"""),
         )
-        private val lordRx = Regex("""other ([a-z]+) (creatures )?you control get \+(\d+)/\+\d+""")
+        private val lordRx = Regex("""(?:other ([a-z]+) (?:creatures )?(?:you control )?|([a-z]+) creature tokens you control |creature (tokens) you control )get \+(\d+)/\+\d+(?: and have ([a-z ,]+))?""")
         private fun singular(w: String): String = when {
             w.endsWith("ves") -> w.dropLast(3) + "f"
             w.endsWith("ies") -> w.dropLast(3) + "y"
@@ -263,7 +310,8 @@ class SimCard(
          * "any colour" sources.
          */
         fun from(card: DeckCard, deckColors: Int, commander: Boolean = false): SimCard {
-            val o = card.oracle.orEmpty()
+            // Double-faced cards: the front face is what gets played.
+            val o = card.oracle.orEmpty().substringBefore("\n//\n")
             val text = o.lowercase()
             val type = card.type.takeIf { it != CardType.UNKNOWN } ?: when {
                 card.name.lowercase() in DeckParser.basicLands -> CardType.LAND
@@ -326,8 +374,29 @@ class SimCard(
             val drainAmount = countAfter(text, Regex("each opponent loses (\\d+|x|one|two|three) life"))
             val tokenCount = countAfter(text, Regex("create (a|an|one|two|three|four|x|\\d+) [^.]{0,40}tokens?")) ?: 0
             val tokenPower = Regex("(\\d+)/(\\d+)[^.]{0,30}token").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            val lord = lordRx.find(text)?.takeIf { singular(it.groupValues[1]) != "creature" }
-            val anthem = (lord?.groupValues?.get(3) ?: anthemRx.find(text)?.groupValues?.get(2))?.toIntOrNull()?.coerceAtMost(3) ?: 0
+            // Anthems only from always-on text: not "until end of turn", not activated or triggered abilities.
+            val staticText = text.split('\n').filter { l ->
+                "until end of turn" !in l && ':' !in l && !l.trimStart().startsWith("when") && !l.trimStart().startsWith("at the beginning")
+            }.joinToString("\n")
+            val lord = lordRx.find(staticText)?.takeIf { m -> m.groupValues[1].isEmpty() || singular(m.groupValues[1]) != "creature" }
+            val lordType = lord?.let { m ->
+                when {
+                    m.groupValues[3].isNotEmpty() || m.groupValues[2].isNotEmpty() -> "token"
+                    else -> singular(m.groupValues[1])
+                }
+            }
+            // Keyword-only lords: "Horrors you control have menace", "All Rats have fear", "Other Merfolk have islandwalk".
+            val kwLord = Regex("""(?:all |other )?([a-z]+?)s? (?:creatures )?(?:you control )?have ([a-z ,]+)""").find(staticText)
+                ?.takeIf { m -> m.groupValues[1] !in setOf("creature", "permanent", "land", "artifact", "it", "they", "spell", "you") && '"' !in m.value }
+            val lordGrantText = lord?.groupValues?.get(5)?.ifBlank { null } ?: kwLord?.groupValues?.get(2).orEmpty()
+            val anthem = (lord?.groupValues?.get(4) ?: anthemRx.find(staticText)?.groupValues?.get(2))?.toIntOrNull()?.coerceAtMost(3) ?: 0
+            val teamMatch = Regex("""(other )?(creatures|permanents) you control have ([a-z ,]+)""").find(staticText)
+            val teamGrants = teamMatch?.groupValues?.get(3)?.takeIf { '"' !in it }?.let { Kw.of(it) } ?: 0
+            val teamGrantsOthers = teamMatch?.groupValues?.get(1)?.isNotEmpty() == true
+            val tokenMultiplier = if (Regex("""tokens? would be created under your control, twice that many|creates? twice that many of those tokens""").containsMatchIn(text)) 2 else 1
+            val extraSquirrels = "plus that many 1/1 green squirrel" in text
+            val counterMultiplier = if (Regex("""twice that many (of those )?(\+1/\+1 )?counters""").containsMatchIn(text)) 2 else 1
+            val counterPlus = if (Regex("""that many plus one \+1/\+1 counters""").containsMatchIn(text)) 1 else 0
             val removalKind = when {
                 Regex("fights (target|up to one target|another target) creature").containsMatchIn(text) -> RemovalKind.FIGHT
                 Regex("target creature( an opponent controls| you don't control)? gets -\\d+/-\\d+").containsMatchIn(text) -> RemovalKind.MINUS
@@ -347,6 +416,8 @@ class SimCard(
                 protectionRx.any { it.containsMatchIn(line) } || recursionRx.any { it.containsMatchIn(line) } ||
                 pumpRx.containsMatchIn(line) || reduceRx.containsMatchIn(line) || tutorRx.containsMatchIn(line) ||
                 Regex("""(equipped|enchanted) creature (gets|has)""").containsMatchIn(line) ||
+                Regex("""tokens? would be created under your control|twice that many|that many plus one|(creatures|permanents) you control have|explores again|tap a (land|permanent) for mana""").containsMatchIn(line) ||
+                Regex("""^(all |other )?[a-z]+s? (you control )?have [a-z ,]+\.?$|you may look at the top card of your library""").containsMatchIn(line) ||
                 Regex("""~ can't (be blocked|block)|add \{|enters tapped|enters the battlefield tapped|^as ~ enters|for each|you may play|can't be countered""").containsMatchIn(line)
             val parsed = if (type == CardType.LAND) null else
                 EffectParser.parse(card.name, card.oracle, permanent = type != CardType.INSTANT && type != CardType.SORCERY, roleLine = ::roleLine)
@@ -378,7 +449,7 @@ class SimCard(
                 power = if (creature) stat(card.power).let { if (card.power == null) maxOf(1, mv - 1) else it } else 0,
                 toughness = if (creature) stat(card.toughness).let { if (card.toughness == null) maxOf(1, mv) else it } else 0,
                 keywords = keywords,
-                anthem = anthem, lordType = lord?.groupValues?.get(1)?.let(::singular),
+                anthem = anthem, lordType = lordType ?: kwLord?.groupValues?.get(1)?.let { singular(it) },
                 buff = buffRx.find(text)?.groupValues?.get(2)?.toIntOrNull()?.coerceAtMost(6) ?: 0,
                 draws = when {
                     engine -> 1
@@ -396,6 +467,14 @@ class SimCard(
                 reduceFor = reduce?.groupValues?.get(1)?.trim(), reduceBy = reduce?.groupValues?.get(2)?.toIntOrNull() ?: 0,
                 toxic = Regex("""\btoxic (\d+)""").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
                 loyalty = parsed?.loyalty.orEmpty(), chapters = parsed?.chapters.orEmpty(),
+                teamGrants = teamGrants, teamGrantsOthers = teamGrantsOthers, tokenMultiplier = tokenMultiplier, extraSquirrels = extraSquirrels,
+                lordGrants = Kw.of(lordGrantText), landwalk = walks(kwText), lordLandwalk = walks(lordGrantText),
+                counterPlus = counterPlus, counterMultiplier = counterMultiplier,
+                exploreTwice = Regex("""explores, then (it )?explores again""").containsMatchIn(text),
+                // "Cascade, cascade" (Maelstrom Wanderer) counts twice.
+                cascade = text.lines().filter { it.trim().startsWith("cascade") }.sumOf { l -> Regex("""\bcascade\b""").findAll(l).count() }
+                    .let { k -> if (k == 0 && card.keywords.orEmpty().any { it.equals("cascade", true) }) 1 else k },
+                landManaExtra = if (Regex("""whenever you tap a (land|permanent) for mana, add (one|an additional) (additional )?mana""").containsMatchIn(text)) 1 else 0,
             )
         }
     }
