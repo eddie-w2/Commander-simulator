@@ -16,6 +16,15 @@ import com.eddiew.commandersim.sim.SampleSimulator
 import com.eddiew.commandersim.sim.SimCard
 import com.eddiew.commandersim.sim.TokenKind
 import com.eddiew.commandersim.sim.Trigger
+import com.eddiew.commandersim.sim.Blink
+import com.eddiew.commandersim.sim.KeywordCounter
+import com.eddiew.commandersim.sim.LoseLifeSelf
+import com.eddiew.commandersim.sim.OppTokens
+import com.eddiew.commandersim.sim.Pump
+import com.eddiew.commandersim.sim.ReturnDied
+import com.eddiew.commandersim.sim.SacrificeSelf
+import com.eddiew.commandersim.sim.ScaleKind
+import com.eddiew.commandersim.sim.Sweep
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -52,6 +61,57 @@ class QuickModelTest {
     }
 
     @Test
+    fun `wider card coverage reads new effects without misreading`() {
+        fun sim(type: String, cost: String, oracle: String, name: String = "X") = SimCard.from(card(name, type, cost, oracle), ManaColor.ALL)
+        fun full(c: SimCard) = assertEquals(c.coverage.missed.toString(), Coverage.Status.FULL, c.coverage.status)
+        // Untracked "whenever" events: small effects about every other turn; big ones stay unread.
+        sim("Creature — Zombie", "{4}{B}", "Whenever a card is put into an opponent's graveyard from anywhere, put a +1/+1 counter on Vulturous Zombie.", "Vulturous Zombie").let {
+            full(it); assertEquals(Trigger.SOMETIMES, it.abilities.single().trigger)
+        }
+        sim("Enchantment", "{2}{W}", "Whenever a spell or ability an opponent controls destroys a noncreature permanent you control, destroy target permanent.").let {
+            assertTrue(it.abilities.none { a -> a.trigger == Trigger.SOMETIMES })
+        }
+        // Keyword counters, opponents' tokens, drawbacks.
+        sim("Creature — Human", "{2}{W}", "When this creature enters, put a flying counter on target creature you control.").abilities.single().let {
+            assertEquals(KeywordCounter(Kw.FLYING, self = false), it.effects.single())
+        }
+        sim("Instant", "{2}{G}", "Destroy target permanent. Its controller creates a 3/3 green Beast creature token.", "Beast Within").abilities.single().let {
+            assertTrue(it.effects.any { e -> e is OppTokens && !e.each && e.tokens.power == 3 })
+        }
+        sim("Enchantment", "{2}{B}{B}", "At the beginning of your upkeep, you draw a card and you lose 1 life.", "Phyrexian Arena").abilities.single().let {
+            assertTrue(it.effects.contains(Draw(1)) && it.effects.contains(LoseLifeSelf(1)))
+        }
+        // Blink only your own creatures; death-return only on death triggers.
+        sim("Creature — Angel", "{3}{W}", "Flash\nFlying\nWhen this creature enters, exile target non-Angel creature you control, then return that card to the battlefield under your control.", "Restoration Angel").let {
+            full(it); assertEquals(listOf(Blink), it.abilities.single().effects)
+        }
+        sim("Creature — Moth", "{2}{W}{B}", "Flying\nWhenever a creature you control without flying dies, return it to the battlefield under its owner's control with a flying counter on it.", "Luminous Broodmoth").abilities.single().let {
+            assertEquals(Trigger.OWN_DIES, it.trigger); assertEquals(ReturnDied(Kw.FLYING), it.effects.single())
+        }
+        // Quoted token text doesn't make the card sacrifice itself; doom-counter milestones aren't every upkeep.
+        sim("Enchantment", "{3}{R}", "At the beginning of each player's upkeep, that player creates a 5/1 red Elemental creature token named Lightning Rager. It has trample, haste, and \"At the beginning of the end step, sacrifice this creature.\"", "Rite of the Raging Storm").abilities.single().let {
+            assertTrue(it.effects.none { e -> e == SacrificeSelf })
+        }
+        sim("Artifact", "{3}", "At the beginning of each player's upkeep, that player may put a doom counter on Lavabrink Floodgates or remove a doom counter from it. Then if it has three or more doom counters on it, sacrifice Lavabrink Floodgates. When you do, it deals 6 damage to each creature.", "Lavabrink Floodgates").abilities.forEach {
+            assertTrue(it.effects.none { e -> e is Sweep })
+        }
+        // Modal activated abilities use their first readable mode, not a free enters effect.
+        sim("Artifact — Clue", "{1}{U}{B}", "When this artifact enters, surveil 1.\n{2}, Sacrifice this artifact: Choose one —\n• Cloak the top card of your library.\n• Draw a card.", "Ransom Note").let {
+            assertEquals(1, it.abilities.size); assertTrue(it.activated.single().sacrificeSelf); full(it)
+        }
+        // Static grants and cost reducers.
+        sim("Creature — Angel", "{3}{W}{W}", "Flying\nOther creatures you control with flying have indestructible.", "Sephara, Sky's Blade").let {
+            full(it); assertEquals("flying", it.lordType); assertEquals(Kw.INDESTRUCTIBLE, it.lordGrants)
+        }
+        sim("Creature — Human Wizard", "{2}{U}", "Spells you cast from anywhere other than your hand cost {2} less to cast.", "Sage of the Beyond").let {
+            full(it); assertEquals("commander", it.reduceFor); assertEquals(2, it.reduceBy)
+        }
+        sim("Creature — Beast", "{4}{G}", "Whenever Wild Beastmaster attacks, each other creature you control gets +X/+X until end of turn, where X is Wild Beastmaster's power.", "Wild Beastmaster").let {
+            full(it); assertEquals(ScaleKind.SOURCE_POWER, (it.abilities.single().effects.single() as Pump).scale?.kind)
+        }
+    }
+
+    @Test
     fun `common triggers and activations are read`() {
         fun sim(type: String, cost: String, oracle: String, name: String = "X") = SimCard.from(card(name, type, cost, oracle), ManaColor.ALL)
         sim("Legendary Creature — Dryad", "{2}{G}{U}", "Landfall — Whenever a land you control enters, you gain 1 life and draw a card.", "Tatyova, Benthic Druid").abilities.single().let {
@@ -63,7 +123,7 @@ class QuickModelTest {
             assertTrue(it.effects.contains(LoseLife(1, each = false)))
         }
         sim("Enchantment", "{2}{U}", "Whenever an opponent casts a spell, you may draw a card unless that player pays {1}.").abilities.single().let {
-            assertEquals(Trigger.UPKEEP, it.trigger)
+            assertEquals(Trigger.OPP_CAST, it.trigger)
         }
         sim("Creature — Goblin", "{1}{R}", "Whenever you cast a noncreature spell, create a Treasure token.").abilities.single().let {
             assertEquals(Trigger.CAST_NONCREATURE, it.trigger)

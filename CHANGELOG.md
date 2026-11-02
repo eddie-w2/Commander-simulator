@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.3.09
+The quick model reads far more of each card. On a test set of all 180 Commander precons, the share of non-land cards it fully reads went from **48% to 85%** on average (median 87%). Your decks should see a similar jump on the deck screen's coverage panel and in the results' "Check:" notes.
+
+- **Many more triggers:** draws, spells cast by you, opponents or anyone, equipment and aura triggers, life gain, each opponent's or each player's upkeep, +1/+1 counters being placed, sacrifices, being dealt damage or blocking, curses, enchantments entering, being attacked, cycling and discarding, monstrosity, surveil, your commander entering or attacking, opponents' creatures entering, class levels, tokens being made, and "when ~ attacks".
+- **Many more effects:** removal and sweepers inside abilities, edicts, discard, scry and surveil, tapping and goad, the monarch and initiative, venture, free spells and discover, wheels, rituals, steal effects, reanimation, land fetching, populate, token copies, fogs, energy, monstrosity, class levels, untapping, charge/quest counters, Living Death effects, casting from graveyards, graveyard hate, mill, poison and proliferate, extra turns and combats.
+- **New in this update:**
+  - Flying, menace, shield and other keyword counters.
+  - Tokens your opponents get (Beast Within, Generous Gift, Hunted Dragon).
+  - Your own life loss is now counted (Phyrexian Arena, Night's Whisper, Infernal Grasp). Before, these were free.
+  - Blink (Restoration Angel, Conjurer's Closet) and creatures coming back when they die (Luminous Broodmoth, Gift of Immortality).
+  - "+X/+X" and "damage equal to …" where X is the creature's power, the last spell's mana value or your highest mana value.
+  - Role and mutagen tokens, vanishing and fading, Room doors, and modal activated abilities ("{2}, sacrifice: choose one").
+  - Cost reducers with conditions, and "spells you cast from anywhere other than your hand" now make your commander cheaper.
+  - Keyword lords with conditions ("other creatures you control with flying have indestructible", "all Sliver creatures have haste") and keywords that only apply some of the time.
+- **Approximations, so you know what you're seeing:**
+  - Repeatable events the model doesn't track ("whenever a card is put into an opponent's graveyard") happen about every other turn. Only small effects (cards, tokens, counters, life, a little damage) get this. Removal, steals and reanimation on such events stay unread.
+  - Protection is played as hexproof, and shield counters as indestructible.
+  - "Creatures your opponents control attack each combat if able" is played like goad.
+  - An X the model can't count is about 2. Alternative costs are paid as the normal mana cost.
+  - Lines that make no difference here (planar dice, "secretly choose an opponent", returning one of your own creatures to hand) count as read and are labelled "no effect in this model".
+- **Fixes found while checking:** Rite of the Raging Storm no longer sacrifices itself, Lavabrink Floodgates no longer wipes the board every upkeep, and cards like Ransom Note no longer get their activated modes for free when they enter.
+- Speed is unchanged.
+
 ## v0.3.08
 Commanders, checked against real decks from a backup.
 - **Fix: a fake anthem.** Activated or "until end of turn" pumps were read as permanent anthems. Pippin's "Sacrifice four Foods: other creatures get +3/+3 … until end of turn" made every Silly hobbits creature permanently +3/+3, which is why it won 81%. Anthems now come only from always-on text.
