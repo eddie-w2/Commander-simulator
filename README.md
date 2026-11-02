@@ -17,7 +17,11 @@ Kotlin + Jetpack Compose, dark grey / electric blue HUD theme.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
-> Until the Forge simulator server exists, the app uses a **simplified on-device sample model** (`sim/ToyGame.kt`). It produces every statistic so the dashboards can be built and tested, but its win rates are not meaningful. The results screen labels this.
+### Simulation engines
+- **Forge engine (default for real results):** Forge's own rules engine and AI (`forge-core`, `forge-game`, `forge-ai` at the commit in [`forge.version`](forge.version)) run on the phone, with no Forge UI. Only the scripts for cards in your decks are loaded. Every game event is recorded into the same statistics as the dashboards. Expect roughly 10–60 seconds per 4-player game; you can stop early and keep the results.
+- **Quick sample:** a simplified model (`sim/ToyGame.kt`) for trying out the dashboards instantly. Its results don't reflect real decks, and the results screen labels this.
+
+Forge's engine jars and card data are built by [`tools/build-forge.sh`](tools/build-forge.sh) (needs git, JDK 17, Maven, Python 3) and are not checked in. CI builds and caches them, and runs real Forge games as a test.
 
 ### Install on your phone
 - **Releases:** open the repo's **Releases** page and download `commander-sim-vX.Y.ZZ.apk` from the latest release.
@@ -26,7 +30,11 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 Open the APK on your phone and allow "install unknown apps" when asked. From v0.1.02 on, every build is signed with the same key (`android/app/debug.keystore`), so new versions install over the old one and keep your decks. Builds before v0.1.02 used a random key, so uninstall those once first.
 
 ### Build locally
-Android Studio (Ladybug or newer), JDK 17: open `/android` and run. Or run `./gradlew assembleDebug` from `/android`.
+1. Run `tools/build-forge.sh` once (and again whenever `forge.version` changes).
+2. Android Studio (Ladybug or newer), JDK 17: open `/android` and run. Or run `./gradlew assembleDebug` from `/android`.
+
+### Updates
+**Settings → App updates** checks this repo's GitHub Releases and installs newer versions in place. Android asks once to allow the app to install updates.
 
 ## License
 Private while in testing. GPL-3.0 will be applied at the first working release. This is required because the simulator links Forge, which is GPL-3.0.

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eddiew.commandersim.AppViewModel
+import com.eddiew.commandersim.SimEngine
 import com.eddiew.commandersim.SimMode
 import com.eddiew.commandersim.SimState
 import com.eddiew.commandersim.data.model.Deck
@@ -73,7 +74,9 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
     val field = decks.filter { it.id in settings.pool && it.id != a?.id && it.id != b?.id }
     val poolDecks = decks.filter { it.id in settings.pool }
     val podSize = minOf(4, if (ab) field.size + 1 else poolDecks.size).coerceAtLeast(2)
-    val totalGames = if (ab) settings.gamesPerDeck * 2 else ceil(poolDecks.size * settings.gamesPerDeck / podSize.toDouble()).toInt()
+    val forge = settings.engine == SimEngine.FORGE
+    val games = settings.effectiveGames
+    val totalGames = if (ab) games * 2 else ceil(poolDecks.size * games / podSize.toDouble()).toInt()
     val ready = if (ab) a != null && b != null && a.id != b.id && field.isNotEmpty() else poolDecks.size >= 2
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -120,21 +123,41 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
             }
 
             HudPanel(title = "Run settings") {
+                Text("ENGINE", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HudChip("Forge engine", forge, { if (vm.forgeAvailable) vm.setEngine(SimEngine.FORGE) }, Modifier.weight(1f),
+                        color = if (vm.forgeAvailable) Hud.Cyan else Hud.Dim)
+                    HudChip("Quick sample", !forge, { vm.setEngine(SimEngine.SAMPLE) }, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    when {
+                        forge -> "Real Magic rules and Forge's AI, run on this phone. Expect roughly 10–60 seconds per 4-player game, " +
+                            "so start small. You can stop at any time and keep the results so far."
+                        vm.forgeAvailable -> "A simplified model, for trying out the dashboards quickly. Its results don't reflect your real decks."
+                        else -> "This build doesn't include the Forge engine; only the simplified sample model is available."
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = if (forge) Hud.Ice else Hud.Dim,
+                )
+                Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(if (ab) "Games per version" else "Games per deck", style = MaterialTheme.typography.bodyMedium,
                         color = Hud.Text, modifier = Modifier.weight(1f))
-                    Text("%,d".format(settings.gamesPerDeck), fontFamily = Mono, fontWeight = FontWeight.Bold, color = Hud.Cyan)
+                    Text("%,d".format(games), fontFamily = Mono, fontWeight = FontWeight.Bold, color = Hud.Cyan)
                 }
+                val range = if (forge) 4f..200f else 100f..5000f
+                val stepSize = if (forge) 4 else 100
                 Slider(
-                    value = settings.gamesPerDeck.toFloat(),
-                    onValueChange = { vm.setGames(((it / 100f).roundToInt() * 100).coerceIn(100, 5000)) },
-                    valueRange = 100f..5000f,
+                    value = games.toFloat().coerceIn(range),
+                    onValueChange = { vm.setGames(((it / stepSize).roundToInt() * stepSize).coerceIn(range.start.toInt(), range.endInclusive.toInt())) },
+                    valueRange = range,
                     enabled = !running,
                     colors = SliderDefaults.colors(thumbColor = Hud.Cyan, activeTrackColor = Hud.Electric, inactiveTrackColor = Hud.Grid),
                 )
                 Text(
-                    "±${ciWidth(settings.gamesPerDeck)} points of win-rate uncertainty (95%) per deck." +
-                        if (ab) " Paired games make A/B differences much more precise than that." else "",
+                    "±${ciWidth(games)} points of win-rate uncertainty (95%) per deck." +
+                        if (ab) " Paired games make A/B differences more precise than that." else "",
                     style = MaterialTheme.typography.bodySmall, color = Hud.Muted,
                 )
                 Spacer(Modifier.height(10.dp))
@@ -148,29 +171,16 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
                         colors = SwitchDefaults.colors(checkedThumbColor = Hud.Bg, checkedTrackColor = Hud.Electric, uncheckedTrackColor = Hud.Grid),
                     )
                 }
-                Spacer(Modifier.height(10.dp))
-                Text("ENGINE", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    HudChip("On-device sample", true, {})
-                    HudChip("Forge server · soon", false, {}, color = Hud.Dim)
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "The sample engine is a simplified game model so you can try the app now. " +
-                        "Real results will come from the Forge simulator once its server is running.",
-                    style = MaterialTheme.typography.bodySmall, color = Hud.Dim,
-                )
             }
 
             when (val s = sim) {
-                is SimState.Running -> RunningPanel(s.progress, totalGames) { vm.cancelSimulation() }
+                is SimState.Running -> RunningPanel(s, totalGames, onStop = { vm.stopEarly() }, onCancel = { vm.cancelSimulation() })
                 is SimState.Failed -> Notice(s.message, color = Hud.Negative)
                 else -> Unit
             }
 
             HudButton(
-                if (running) "Running…" else if (ab) "▶ Run A/B test" else "▶ Run simulation",
+                if (running) "Running…" else if (ab) "▶ Run A/B test" + (if (forge) " · Forge" else "") else "▶ Run simulation" + (if (forge) " · Forge" else ""),
                 onClick = { vm.runSimulation(onFinished) },
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
                 enabled = !running && ready,
@@ -223,10 +233,14 @@ private fun DeckLine(d: Deck, mark: String, markColor: Color, onClick: () -> Uni
 }
 
 @Composable
-private fun RunningPanel(progress: Float, total: Int, onCancel: () -> Unit) {
+private fun RunningPanel(state: SimState.Running, total: Int, onStop: () -> Unit, onCancel: () -> Unit) {
+    val progress = state.progress
     val anim by animateFloatAsState(progress, tween(300), label = "p")
     val spin = rememberInfiniteTransition(label = "spin")
     val angle by spin.animateFloat(0f, 360f, infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart), label = "a")
+    val elapsed = (System.currentTimeMillis() - state.startedAt) / 1000
+    val done = (progress * total).roundToInt()
+    val eta = if (done > 0) (elapsed * (total - done) / done) else null
     HudPanel(title = "Simulating", accent = Hud.Cyan) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(96.dp), contentAlignment = Alignment.Center) {
@@ -244,11 +258,24 @@ private fun RunningPanel(progress: Float, total: Int, onCancel: () -> Unit) {
                 Text("${(anim * 100).roundToInt()}%", fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Hud.Text)
             }
             Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                Text("%,d / %,d games".format((progress * total).roundToInt(), total), fontFamily = Mono, color = Hud.Ice)
-                Text("Running pods…", style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
-                Spacer(Modifier.height(8.dp))
-                HudOutlineButton("Cancel", onCancel, color = Hud.Negative)
+                Text("%,d / %,d games".format(done, total), fontFamily = Mono, color = Hud.Ice)
+                Text(state.status.ifBlank { "Running pods…" }, style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+                Text(
+                    "Elapsed ${fmt(elapsed)}" + (eta?.let { " · about ${fmt(it)} left" } ?: ""),
+                    style = MaterialTheme.typography.labelSmall, color = Hud.Dim,
+                )
             }
         }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            HudButton("Stop & show results", onStop, Modifier.weight(1f), enabled = done > 0)
+            HudOutlineButton("Cancel", onCancel, color = Hud.Negative)
+        }
     }
+}
+
+private fun fmt(seconds: Long): String = when {
+    seconds < 60 -> "${seconds}s"
+    seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
+    else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
 }

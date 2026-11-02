@@ -34,6 +34,8 @@ data class SimulationReport(
     val matchups: List<MatchupStat>,
     val meta: SimMeta,
     val ab: AbComparison? = null,
+    /** Things the user should know about this run (missing cards, stopped early…). */
+    val notes: List<String> = emptyList(),
 ) {
     fun deck(id: String): DeckReport? = decks.firstOrNull { it.deckId == id }
     val ranked: List<DeckReport> get() = decks.sortedByDescending { it.outcome.winRate }

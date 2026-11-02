@@ -151,7 +151,8 @@ internal class DeckAccumulator(val deck: Deck) {
         if (t.eliminatedTurn > 0) { elimTurnSum += t.eliminatedTurn; elimCount++ }
         t.lossCause?.let { lossCause.merge(it, 1, Int::plus) }
         if (r.winnerSeat == null && t.eliminatedTurn < 0) lossCause.merge(EndCondition.TIMEOUT, 1, Int::plus)
-        if (seat < 4) { seatGames[seat]++; if (won) seatWins[seat]++ }
+        val position = r.turnPosition?.getOrNull(seat) ?: seat
+        if (position < 4) { seatGames[position]++; if (won) seatWins[position]++ }
 
         // ── Damage
         dmgPlayers += t.dmgPlayers; dmgCombat += t.dmgCombat; dmgNonCombat += t.dmgNonCombat

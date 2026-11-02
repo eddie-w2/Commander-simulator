@@ -24,7 +24,24 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests
+      - name: Cache Forge engine build
+        id: forge-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/app/libs/forge
+            android/app/src/main/assets/forge
+          key: forge-${{ hashFiles('forge.version', 'tools/build-forge.sh', 'tools/package_forge_res.py') }}
+      - name: Build Forge engine and card data
+        if: steps.forge-cache.outputs.cache-hit != 'true'
+        working-directory: .
+        run: tools/build-forge.sh
+      - name: Unpack Forge data for tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/forge-res"
+          unzip -q -o app/src/main/assets/forge/forge-res.zip -d "$RUNNER_TEMP/forge-res"
+          echo "FORGE_RES=$RUNNER_TEMP/forge-res" >> "$GITHUB_ENV"
+      - name: Unit tests (including real Forge games)
         run: ./gradlew --no-daemon testDebugUnitTest
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug

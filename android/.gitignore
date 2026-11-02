@@ -5,3 +5,5 @@ local.properties
 *.iml
 captures/
 .kotlin/
+app/libs/forge/
+app/src/main/assets/forge/

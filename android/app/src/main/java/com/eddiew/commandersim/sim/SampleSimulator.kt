@@ -27,13 +27,24 @@ import kotlin.random.Random
  * A/B mode: deck A and deck B each play the same pods against the field, with the same shuffle seed per game,
  * so the only difference between paired games is the swapped cards.
  */
-class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : SimulationService {
+class SampleSimulator internal constructor(
+    private val seed: Long,
+    private val player: GamePlayer,
+    private val source: String,
+    /** Extra notes for the report, read after the run (e.g. cards the engine didn't know). */
+    private val notes: () -> List<String> = { emptyList() },
+) : SimulationService {
 
-    override suspend fun run(config: SimConfig, decks: List<Deck>, onProgress: (Float) -> Unit): SimulationReport =
+    constructor(seed: Long = System.currentTimeMillis()) : this(seed, ToyGamePlayer(), "sample")
+
+    override suspend fun run(config: SimConfig, decks: List<Deck>, control: SimControl, onProgress: (Float) -> Unit): SimulationReport =
         withContext(Dispatchers.Default) {
             val byId = decks.associateBy { it.id }
             val pool = config.deckIds.distinct().mapNotNull { byId[it] }
-            val run = Run(Random(seed), config, onProgress)
+            control.status = "Preparing decks…"
+            player.prepare((pool + listOfNotNull(config.ab?.let { byId[it.aId] }, config.ab?.let { byId[it.bId] })).distinctBy { it.id })
+            control.status = "Playing games…"
+            val run = Run(Random(seed), config, control, onProgress)
             val ab = config.ab
             val comparison = if (ab != null) {
                 val a = byId[ab.aId] ?: error("Deck A no longer exists.")
@@ -47,7 +58,12 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
                 null
             }
             onProgress(1f)
-            run.report(comparison, ab?.let { listOf(it.aId to "A", it.bId to "B") }?.toMap() ?: emptyMap())
+            require(run.games > 0) { "No games finished." }
+            val extra = buildList {
+                addAll(notes())
+                if (control.stopRequested) add("Stopped early after ${run.games} games; results are less certain.")
+            }
+            run.report(comparison, ab?.let { listOf(it.aId to "A", it.bId to "B") }?.toMap() ?: emptyMap()).copy(notes = extra)
         }
 
     private class PairAcc {
@@ -57,8 +73,7 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
         var removal = 0.0
     }
 
-    private inner class Run(val rng: Random, val config: SimConfig, val onProgress: (Float) -> Unit) {
-        val profiles = HashMap<String, DeckProfile>()
+    private inner class Run(val rng: Random, val config: SimConfig, val control: SimControl, val onProgress: (Float) -> Unit) {
         val acc = LinkedHashMap<String, DeckAccumulator>()
         val pairs = HashMap<Pair<String, String>, PairAcc>()
         var games = 0
@@ -67,11 +82,9 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
         var nanoSum = 0L
         val roundHist = IntArray(MAX_TURNS)
 
-        fun profile(d: Deck) = profiles.getOrPut(d.id) { DeckProfile.from(d) }
-
         fun play(seats: List<Deck>, gameSeed: Long): GameResult {
             val start = System.nanoTime()
-            val result = ToyGame(seats.map { profile(it) }, Random(gameSeed)).play()
+            val result = player.play(seats, gameSeed)
             nanoSum += System.nanoTime() - start
             games++
             turnSum += result.rounds
@@ -103,22 +116,26 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
             val podSize = min(config.podSize, pool.size)
             val total = ceil(pool.size * config.gamesPerDeck / podSize.toDouble()).toInt()
             val counts = HashMap<String, Int>()
+            val step = maxOf(1, total / 200)
             for (g in 0 until total) {
                 coroutineContext.ensureActive()
+                if (control.stopRequested) break
                 play(seatOrder(pickBalanced(pool, counts, podSize), g), rng.nextLong())
-                if (g % 20 == 0) onProgress(g / total.toFloat())
+                if (g % step == 0) onProgress((g + 1) / total.toFloat())
             }
         }
 
         suspend fun abTest(a: Deck, b: Deck, field: List<Deck>): AbComparison {
             val opps = min(config.podSize - 1, field.size)
             val counts = HashMap<String, Int>()
-            val n = config.gamesPerDeck
+            var n = config.gamesPerDeck
+            val step = maxOf(1, n / 200)
             var aWins = 0; var bWins = 0; var onlyA = 0; var onlyB = 0
             var diffSum = 0.0; var diffSq = 0.0
             val perOpp = HashMap<String, IntArray>() // games, aWins, bWins
-            for (g in 0 until n) {
+            for (g in 0 until config.gamesPerDeck) {
                 coroutineContext.ensureActive()
+                if (control.stopRequested) { n = g; break }
                 val others = pickBalanced(field, counts, opps)
                 val seat = if (config.seatRotation) g % (opps + 1) else rng.nextInt(opps + 1)
                 val gameSeed = rng.nextLong()
@@ -133,8 +150,9 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
                 val d = (wb - wa).toDouble()
                 diffSum += d; diffSq += d * d
                 for (o in others) perOpp.getOrPut(o.id) { IntArray(3) }.let { it[0]++; it[1] += wa; it[2] += wb }
-                if (g % 10 == 0) onProgress(g / n.toFloat())
+                if (g % step == 0) onProgress((g + 1) / config.gamesPerDeck.toFloat())
             }
+            n = n.coerceAtLeast(1)
             val mean = diffSum / n
             val variance = if (n > 1) (diffSq - n * mean * mean) / (n - 1) else 0.0
             val se = sqrt(variance.coerceAtLeast(0.0) / n)
@@ -164,7 +182,7 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
             return SimulationReport(
                 id = UUID.randomUUID().toString(),
                 createdAt = System.currentTimeMillis(),
-                source = "sample",
+                source = source,
                 config = config,
                 decks = decks,
                 matchups = pairs.map { (k, v) ->

@@ -37,6 +37,7 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
     val decks by vm.decks.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
+    val update by vm.update.collectAsStateWithLifecycle()
     val names = decks.associate { it.id to it.name }
     var ownedOnly by rememberSaveable { mutableStateOf(false) }
     val shown = if (ownedOnly) decks.filter { it.owned } else decks
@@ -45,7 +46,10 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
         ScreenHeader(
             "Deck Bay",
             "${decks.size} decks · ${decks.count { it.owned }} owned · ${settings.pool.count { id -> decks.any { it.id == id } }} in pool",
-            trailing = { HudChip("⚙", false, onSettings, color = Hud.Muted) },
+            trailing = {
+                if (update != null) HudChip("⚙ Update", true, onSettings, color = Hud.Cyan)
+                else HudChip("⚙", false, onSettings, color = Hud.Muted)
+            },
         )
         LazyColumn(
             Modifier.fillMaxSize(),

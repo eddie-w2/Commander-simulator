@@ -14,6 +14,16 @@ androidxTestCore = "1.6.1"
 androidxTestExt = "1.2.1"
 
 [libraries]
+# Forge engine dependencies (match forge-core/forge-game/forge-ai poms at the pinned commit)
+guava = { module = "com.google.guava:guava", version = "33.3.1-android" }
+commons-lang3 = { module = "org.apache.commons:commons-lang3", version = "3.18.0" }
+commons-text = { module = "org.apache.commons:commons-text", version = "1.12.0" }
+commons-math3 = { module = "org.apache.commons:commons-math3", version = "3.6.1" }
+jgrapht-core = { module = "org.jgrapht:jgrapht-core", version = "1.5.2" }
+sentry = { module = "io.sentry:sentry", version = "8.21.1" }
+tinylog-api = { module = "org.tinylog:tinylog-api", version = "2.7.0" }
+tinylog-impl = { module = "org.tinylog:tinylog-impl", version = "2.7.0" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version = "2.1.3" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }

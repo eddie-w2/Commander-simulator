@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.03
+- **Forge engine on the phone:** simulations can now use Forge's real rules engine and AI. The app loads only the card scripts your decks need, records every game event into the full statistics, shows live progress with time remaining, and lets you stop early and keep the results. Cards Forge doesn't know are listed in the results.
+- **Self-update:** Settings → App updates checks GitHub Releases, downloads the new APK and opens the installer. The Decks tab shows when an update is available.
+- Seat statistics now use actual turn order when the engine picks who goes first.
+
 ## v0.1.02
 - **Layered analytics:** every stat tile opens its own detail screen. Each detail screen has the value, its rank across all decks, a comparison bar for every deck, the wins-vs-losses gap, and related metrics. It also has breakdowns specific to that kind of stat:
   - **Damage:** which cards dealt it (total / combat / non-combat / kills), damage by round for the top cards, damage per opponent, and the card × opponent matrix.

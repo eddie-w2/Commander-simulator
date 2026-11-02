@@ -80,6 +80,9 @@ private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit, onGam
         if (r.source == "sample") {
             item { Notice("Sample data from the simplified on-device model, not Forge. Use it to explore the dashboards; don't pick a deck from it yet.") }
         }
+        r.notes.forEach { note ->
+            item { Notice(note, color = if (note.startsWith("Forge doesn't know") || note.startsWith("Stopped")) Hud.Warn else Hud.Electric) }
+        }
         val ab = r.ab
         if (ab != null) {
             abSection(r, ab, onOpenDeck)

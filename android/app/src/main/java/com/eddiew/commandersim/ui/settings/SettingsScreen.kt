@@ -32,6 +32,7 @@ import com.eddiew.commandersim.ui.components.HudButton
 import com.eddiew.commandersim.ui.components.HudChip
 import com.eddiew.commandersim.ui.components.HudOutlineButton
 import com.eddiew.commandersim.ui.components.HudPanel
+import com.eddiew.commandersim.ui.components.NeonBar
 import com.eddiew.commandersim.ui.components.Notice
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.TileRow
@@ -57,6 +58,12 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     var pendingRestore by remember { mutableStateOf<String?>(null) }
     var syncResults by remember { mutableStateOf<List<String>>(emptyList()) }
     val version = remember { appVersion(context) }
+    val available by vm.update.collectAsStateWithLifecycle()
+    var checking by remember { mutableStateOf(false) }
+    var checkedUpToDate by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf<Float?>(null) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    var downloaded by remember { mutableStateOf<java.io.File?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -92,6 +99,77 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
             HudChip("← Back", false, onBack, color = Hud.Muted)
 
             message?.let { (text, isError) -> Notice(text, color = if (isError) Hud.Negative else Hud.Positive) }
+
+            HudPanel(title = "App updates", accent = if (available != null) Hud.Cyan else Hud.Electric) {
+                Text("Installed: v$version", style = MaterialTheme.typography.bodyMedium, color = Hud.Text)
+                val rel = available
+                if (rel != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Available: v${rel.version}", style = MaterialTheme.typography.titleMedium, color = Hud.Cyan)
+                    if (rel.notes.isNotBlank()) {
+                        Text(rel.notes.take(600), style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val p = downloadProgress
+                    when {
+                        downloaded != null -> HudButton("Install v${rel.version}", {
+                            if (vm.updater.canInstall()) vm.updater.install(downloaded!!) else vm.updater.openInstallPermissionSettings()
+                        }, Modifier.fillMaxWidth())
+                        p != null -> {
+                            NeonBar(p)
+                            Text("Downloading… ${(p * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
+                        }
+                        else -> HudButton("Download & install", {
+                            updateError = null
+                            downloadProgress = 0f
+                            scope.launch {
+                                try {
+                                    val f = vm.updater.download(rel) { downloadProgress = it }
+                                    downloaded = f
+                                    if (vm.updater.canInstall()) vm.updater.install(f) else vm.updater.openInstallPermissionSettings()
+                                } catch (e: Exception) {
+                                    updateError = e.message ?: "Download failed."
+                                } finally {
+                                    downloadProgress = null
+                                }
+                            }
+                        }, Modifier.fillMaxWidth())
+                    }
+                    if (!vm.updater.canInstall()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Android will ask you once to allow Commander Sim to install updates. Turn it on, then tap Install again.",
+                            style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+                    }
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    HudOutlineButton(if (checking) "Checking…" else "Check for updates", {
+                        if (!checking) {
+                            checking = true
+                            updateError = null
+                            scope.launch {
+                                try {
+                                    checkedUpToDate = vm.checkForUpdate() == null
+                                } catch (e: Exception) {
+                                    updateError = "Couldn't reach GitHub: ${e.message}"
+                                } finally {
+                                    checking = false
+                                }
+                            }
+                        }
+                    }, Modifier.fillMaxWidth())
+                    if (checkedUpToDate) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall, color = Hud.Positive)
+                    }
+                }
+                updateError?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Hud.Negative)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("Updates come from this app's GitHub Releases and keep your decks and results.",
+                    style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+            }
 
             HudPanel(title = "Backup & restore") {
                 TileRow(

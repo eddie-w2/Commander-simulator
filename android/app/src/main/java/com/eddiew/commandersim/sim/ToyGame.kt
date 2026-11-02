@@ -207,7 +207,24 @@ internal class GameResult(
     val winCondition: EndCondition?,
     val rounds: Int,
     val tracks: List<PlayerTrack>,
+    /** Seat (deck order) → actual turn-order position, when the engine chose who goes first. */
+    val turnPosition: IntArray? = null,
 )
+
+/** Something that can play one game between decks: the sample model or Forge. */
+internal interface GamePlayer {
+    /** Called once per simulation with every deck that will play. */
+    fun prepare(decks: List<Deck>) {}
+    fun play(seats: List<Deck>, seed: Long): GameResult
+}
+
+/** The simplified sample model. */
+internal class ToyGamePlayer : GamePlayer {
+    private val profiles = HashMap<String, DeckProfile>()
+    override fun prepare(decks: List<Deck>) { profiles.clear() }
+    override fun play(seats: List<Deck>, seed: Long): GameResult =
+        ToyGame(seats.map { d -> profiles.getOrPut(d.id) { DeckProfile.from(d) } }, Random(seed)).play()
+}
 
 private class Perm(val card: ToyCard, var power: Int, var sick: Boolean, val token: Boolean = false)
 

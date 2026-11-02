@@ -13,8 +13,8 @@ android {
         applicationId = "com.eddiew.commandersim"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.02"
+        versionCode = 3
+        versionName = "0.1.03"
     }
 
     signingConfigs {
@@ -37,6 +37,23 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Forge targets Java 17; backport newer java.util APIs for older Android versions.
+        isCoreLibraryDesugaringEnabled = true
+    }
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES", "META-INF/INDEX.LIST",
+                "META-INF/*.md", "META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/versions/*/module-info.class",
+                "module-info.class",
+            )
+        }
+    }
+    testOptions {
+        unitTests.all {
+            it.maxHeapSize = "3g"
+            it.jvmArgs("-Xss64m")
+        }
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -47,6 +64,18 @@ android {
 }
 
 dependencies {
+    // Forge game engine: built by tools/build-forge.sh into libs/forge (not checked in).
+    implementation(fileTree(mapOf("dir" to "libs/forge", "include" to listOf("*.jar"))))
+    implementation(libs.guava)
+    implementation(libs.commons.lang3)
+    implementation(libs.commons.text)
+    implementation(libs.commons.math3)
+    implementation(libs.jgrapht.core)
+    implementation(libs.sentry)
+    implementation(libs.tinylog.api)
+    implementation(libs.tinylog.impl)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -64,4 +93,12 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+}
+
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }

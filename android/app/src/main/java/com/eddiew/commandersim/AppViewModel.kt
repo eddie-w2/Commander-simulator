@@ -30,13 +30,16 @@ import kotlin.coroutines.cancellation.CancellationException
 
 sealed interface SimState {
     data object Idle : SimState
-    data class Running(val progress: Float) : SimState
+    data class Running(val progress: Float, val status: String = "", val startedAt: Long = System.currentTimeMillis()) : SimState
     data class Failed(val message: String) : SimState
     data object Done : SimState
 }
 
 @Serializable
 enum class SimMode { POOL, AB }
+
+@Serializable
+enum class SimEngine { SAMPLE, FORGE }
 
 @Serializable
 data class SimSettings(
@@ -47,7 +50,12 @@ data class SimSettings(
     val bId: String? = null,
     val gamesPerDeck: Int = 500,
     val seatRotation: Boolean = true,
-)
+    val engine: SimEngine = SimEngine.SAMPLE,
+    /** Forge games are much slower, so they get their own (smaller) game count. */
+    val forgeGamesPerDeck: Int = 12,
+) {
+    val effectiveGames: Int get() = if (engine == SimEngine.FORGE) forgeGamesPerDeck else gamesPerDeck
+}
 
 /** Result of reading a pasted list or link on the import screen. */
 data class ImportPreview(
@@ -71,7 +79,9 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     private val settingsFile = File(app.filesDir, "settings.json")
     private val scryfall = ScryfallClient()
     private val linkImporter = DeckLinkImporter()
-    private val simulator: SimulationService = SampleSimulator()
+    /** True when this build includes Forge's engine and card data. */
+    val forgeAvailable: Boolean = com.eddiew.commandersim.sim.forge.AndroidForge.isBundled(app)
+    private var control: com.eddiew.commandersim.sim.SimControl? = null
 
     val decks = decksRepo.decks
     val report = reportRepo.report
@@ -89,7 +99,17 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
 
     private var simJob: Job? = null
 
+    val updater = com.eddiew.commandersim.data.Updater(app)
+    private val _update = MutableStateFlow<com.eddiew.commandersim.data.Updater.Release?>(null)
+    /** A newer release on GitHub, if one was found. */
+    val update: StateFlow<com.eddiew.commandersim.data.Updater.Release?> = _update.asStateFlow()
+
+    /** Returns the newer release, or null if up to date. Throws on network errors. */
+    suspend fun checkForUpdate(): com.eddiew.commandersim.data.Updater.Release? =
+        updater.checkForUpdate().also { _update.value = it }
+
     init {
+        if (autoLoad) viewModelScope.launch { runCatching { checkForUpdate() } }
         if (autoLoad) viewModelScope.launch {
             decksRepo.load()
             reportRepo.load()
@@ -348,7 +368,10 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     fun setMode(mode: SimMode) = updateSettings { it.copy(mode = mode) }
     fun setA(id: String?) = updateSettings { it.copy(aId = id) }
     fun setB(id: String?) = updateSettings { it.copy(bId = id) }
-    fun setGames(n: Int) = updateSettings { it.copy(gamesPerDeck = n) }
+    fun setGames(n: Int) = updateSettings {
+        if (it.engine == SimEngine.FORGE) it.copy(forgeGamesPerDeck = n) else it.copy(gamesPerDeck = n)
+    }
+    fun setEngine(e: SimEngine) = updateSettings { it.copy(engine = e) }
     fun setSeatRotation(on: Boolean) = updateSettings { it.copy(seatRotation = on) }
 
     fun startAb(aId: String, bId: String) = updateSettings {
@@ -361,15 +384,20 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         val ab = if (s.mode == SimMode.AB && s.aId in ids && s.bId in ids) AbConfig(s.aId!!, s.bId!!) else null
         val config = SimConfig(
             deckIds = s.pool.filter { it in ids && it != ab?.aId && it != ab?.bId },
-            gamesPerDeck = s.gamesPerDeck,
+            gamesPerDeck = s.effectiveGames,
             seatRotation = s.seatRotation,
             ab = ab,
         )
+        val useForge = s.engine == SimEngine.FORGE && forgeAvailable
+        val simulator: SimulationService =
+            if (useForge) com.eddiew.commandersim.sim.forge.AndroidForge.simulator(getApplication<Application>()) else SampleSimulator()
+        val ctl = com.eddiew.commandersim.sim.SimControl().also { control = it }
         simJob?.cancel()
         simJob = viewModelScope.launch {
-            _sim.value = SimState.Running(0f)
+            val started = System.currentTimeMillis()
+            _sim.value = SimState.Running(0f, "Starting…", started)
             try {
-                val report = simulator.run(config, decks.value) { p -> _sim.value = SimState.Running(p) }
+                val report = simulator.run(config, decks.value, ctl) { p -> _sim.value = SimState.Running(p, ctl.status, started) }
                 reportRepo.save(report)
                 _sim.value = SimState.Done
                 onDone()
@@ -385,5 +413,11 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     fun cancelSimulation() {
         simJob?.cancel()
         _sim.value = SimState.Idle
+    }
+
+    /** Stops after the current game and builds results from the games played so far. */
+    fun stopEarly() {
+        control?.stopRequested = true
+        (_sim.value as? SimState.Running)?.let { _sim.value = it.copy(status = "Finishing the current game…") }
     }
 }
