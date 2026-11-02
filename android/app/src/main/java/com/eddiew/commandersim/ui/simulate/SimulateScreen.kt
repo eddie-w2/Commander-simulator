@@ -161,6 +161,20 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
                     enabled = !running,
                     colors = SliderDefaults.colors(thumbColor = Hud.Cyan, activeTrackColor = Hud.Electric, inactiveTrackColor = Hud.Grid),
                 )
+                if (forge) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("PARALLEL GAMES", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        (1..4).forEach { n -> HudChip("$n", settings.forgeWorkers == n, { if (!running) vm.setForgeWorkers(n) }, Modifier.weight(1f)) }
+                    }
+                    Text(
+                        "Each game runs in its own process, so more at once finish faster but use more memory. " +
+                            "2 suits most phones; try 3–4 on phones with 8 GB+ RAM.",
+                        style = MaterialTheme.typography.bodySmall, color = Hud.Dim,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text(
                     "±${ciWidth(games)} points of win-rate uncertainty (95%) per deck." +
                         if (ab) " Paired games make A/B differences more precise than that." else "",

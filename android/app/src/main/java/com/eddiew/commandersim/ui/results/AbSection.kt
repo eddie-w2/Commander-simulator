@@ -32,6 +32,7 @@ import com.eddiew.commandersim.ui.components.NeonBar
 import com.eddiew.commandersim.ui.components.num
 import com.eddiew.commandersim.ui.components.pct
 import com.eddiew.commandersim.ui.components.signedPct
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 import com.eddiew.commandersim.ui.theme.Mono
 
@@ -156,7 +157,7 @@ private fun SideHead(side: String, name: String, rate: Double, color: Color, mod
 
 @Composable
 private fun SwapCard(label: String, stat: CardStat?) {
-    Column(Modifier.padding(vertical = 4.dp)) {
+    Column(Modifier.cardPress(stat?.name ?: label.replace(Regex("^\\d+ "), "")).padding(vertical = 4.dp)) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = Hud.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (stat != null) {
             Text(

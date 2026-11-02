@@ -19,10 +19,11 @@ Kotlin + Jetpack Compose, dark grey / electric blue HUD theme.
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ### Simulation engines
-- **Forge engine (default for real results):** Forge's own rules engine and AI (`forge-core`, `forge-game`, `forge-ai` at the commit in [`forge.version`](forge.version)) run on the phone, with no Forge UI. Only the scripts for cards in your decks are loaded. Every game event is recorded into the same statistics as the dashboards. Expect roughly 10–60 seconds per 4-player game; you can stop early and keep the results.
+- **Forge engine (default for real results):** Forge's own rules engine and AI run on the phone, with no Forge UI, in 1–4 worker processes at once. Only the scripts for cards in your decks are loaded. Every game event is recorded into the same statistics as the dashboards. You can stop early and keep the results.
+- **Forge engine packs:** Forge isn't compiled into the app. It ships as a pack (`android/forgepack`: Forge's engine + our adapter + card data) that the app loads at runtime. One pack, built from [`forge.version`](forge.version), is bundled in the APK. The [Forge pack workflow](.github/workflows/forge-pack.yml) builds Forge's latest master daily, runs a smoke game, and publishes to the `forge-pack` release. The app offers it at launch. Shared types live in `android/engine-api`; changing them means bumping `ENGINE_API_VERSION`.
 - **Quick sample:** a simplified model (`sim/ToyGame.kt`) for trying out the dashboards instantly. Its results don't reflect real decks, and the results screen labels this.
 
-Forge's engine jars and card data are built by [`tools/build-forge.sh`](tools/build-forge.sh) (needs git, JDK 17, Maven, Python 3) and are not checked in. CI builds and caches them, and runs real Forge games as a test.
+Forge's engine jars and card data are built by [`tools/build-forge.sh`](tools/build-forge.sh) (needs git, JDK 17, Maven, Python 3) and are not checked in. CI builds and caches them.
 
 ### Install on your phone
 - **Releases:** open the repo's **Releases** page and download `commander-sim-vX.Y.ZZ.apk` from the latest release.

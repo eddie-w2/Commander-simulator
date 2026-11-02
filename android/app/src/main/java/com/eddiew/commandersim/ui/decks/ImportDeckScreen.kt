@@ -44,6 +44,7 @@ import com.eddiew.commandersim.ui.components.HudPanel
 import com.eddiew.commandersim.ui.components.Notice
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.TileRow
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 import com.eddiew.commandersim.ui.theme.Mono
 import kotlinx.coroutines.delay
@@ -186,7 +187,7 @@ fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
                     ordered.filter { filter.isBlank() || it.name.contains(filter, ignoreCase = true) }.take(12).forEach { c ->
                         val on = c.name in picked
                         Row(
-                            Modifier.fillMaxWidth().clickable {
+                            Modifier.fillMaxWidth().cardPress(c.name) {
                                 picked = if (on) picked - c.name else if (picked.size < 2) picked + c.name else picked
                             }.padding(vertical = 7.dp),
                             verticalAlignment = Alignment.CenterVertically,

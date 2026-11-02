@@ -40,6 +40,7 @@ import com.eddiew.commandersim.ui.components.HudPanel
 import com.eddiew.commandersim.ui.components.Notice
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.TileRow
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 import com.eddiew.commandersim.ui.theme.Mono
 
@@ -101,7 +102,7 @@ fun VariantEditorScreen(vm: AppViewModel, deckId: String, onCancel: () -> Unit, 
                 list.take(if (filter.isBlank()) 40 else 25).forEach { c ->
                     val n = removed[c.name] ?: 0
                     Row(
-                        Modifier.fillMaxWidth().clickable {
+                        Modifier.fillMaxWidth().cardPress(c.name) {
                             removed = when {
                                 n < c.quantity && c.quantity > 1 && n > 0 -> removed + (c.name to n + 1)
                                 n == 0 -> removed + (c.name to 1)

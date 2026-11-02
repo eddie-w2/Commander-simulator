@@ -46,7 +46,13 @@ fun CardDetailScreen(vm: AppViewModel, deckId: String, cardName: String, onBack:
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item { HudChip("← Back", false, onBack, color = Hud.Muted) }
+            item {
+                val show = com.eddiew.commandersim.ui.components.LocalCardInfo.current
+                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HudChip("← Back", false, onBack, color = Hud.Muted)
+                    HudChip("Card text & info", false, { show(c.name) }, color = Hud.Cyan)
+                }
+            }
             item {
                 val iv = c.impactInterval
                 HudPanel(title = "Verdict · ${c.verdict.label}", accent = impactColor(c.impact)) {
@@ -128,7 +134,7 @@ fun CardDetailScreen(vm: AppViewModel, deckId: String, cardName: String, onBack:
             if (c.removedBy.isNotEmpty()) {
                 item {
                     HudPanel(title = "Removed by · total times", accent = Hud.Negative) {
-                        BarList(c.removedBy.map { cardFrom(r, it.name) to it.value }, color = Hud.Negative, valueFormat = { num(it, 0) })
+                        BarList(c.removedBy.map { cardFrom(r, it.name) to it.value }, color = Hud.Negative, valueFormat = { num(it, 0) }, cardLabels = true)
                     }
                 }
             }

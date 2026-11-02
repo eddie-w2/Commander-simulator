@@ -1,9 +1,7 @@
-package com.eddiew.commandersim.sim.forge
+package com.eddiew.commandersim.forgepack
 
-import com.eddiew.commandersim.data.model.Deck
-import com.eddiew.commandersim.sim.GamePlayer
+import com.eddiew.commandersim.sim.BridgeDeck
 import com.eddiew.commandersim.sim.GameResult
-import com.eddiew.commandersim.sim.SimControl
 import forge.CardStorageReader
 import forge.StaticData
 import forge.ai.AiProfileUtil
@@ -29,21 +27,20 @@ import java.util.zip.ZipFile
  * Runs real Commander games with Forge's rules engine and AI, without any Forge UI.
  *
  * [resRoot] holds the unpacked forge-res bundle (see tools/package_forge_res.py):
- * cardsfolder.zip, cardindex.tsv, editions/, tokenscripts/, blockdata/, ai/, languages/.
- * Only the scripts for cards in the simulated decks are extracted and loaded, which keeps start-up
- * fast and memory low on a phone.
+ * cardsfolder.zip, cardindex.tsv, editions/, tokenscripts/, blockdata/, ai/, languages/, lists/.
+ * Only the scripts for cards in the simulated decks are extracted and loaded. The card database is kept between
+ * runs and only rebuilt when new cards are needed.
  */
 internal class ForgeEngine(
     private val resRoot: File,
     private val workDir: File,
-    /** Stop a game as a draw after this many rounds per player. */
-    private val maxRounds: Int = 25,
-    /** Stop a game as a draw after this long. */
-    private val maxMillisPerGame: Long = 5 * 60_000L,
-) : GamePlayer {
-
+) {
     /** Cards in the decks that Forge doesn't have a script for. Filled by [prepare]. */
     var missingCards: List<String> = emptyList()
+        private set
+
+    /** What the last game's recorder saw; useful when stats look wrong. */
+    var lastDiagnostics: String = ""
         private set
 
     private val index: Map<String, String> by lazy {
@@ -54,54 +51,51 @@ internal class ForgeEngine(
     }
 
     private val forgeDecks = HashMap<String, PreparedDeck>()
-
-    /** What the last game's recorder saw; useful when stats look wrong. */
-    var lastDiagnostics: String = ""
-        private set
+    /** Card names (lowercase) whose scripts are in the current card database. */
+    private val loadedNames = HashSet<String>()
+    private var dbLoaded = false
 
     /** A deck converted to Forge, with Forge card name → the app's card name. */
-    internal class PreparedDeck(val deck: Deck, val forgeDeck: forge.deck.Deck, val nameMap: Map<String, String>)
+    internal class PreparedDeck(val deck: BridgeDeck, val forgeDeck: forge.deck.Deck, val nameMap: Map<String, String>)
 
     private fun entryFor(name: String): String? =
         index[name.lowercase()] ?: index[name.substringBefore(" // ").trim().lowercase()]
 
-    private var control: SimControl? = null
-
-    override fun prepare(decks: List<Deck>, control: SimControl) {
-        this.control = control
-        prepare(decks)
-    }
-
-    fun prepare(decks: List<Deck>) {
-        control?.log("Starting the Forge engine…")
+    fun prepare(decks: List<BridgeDeck>, log: (String) -> Unit) {
+        log("Starting the Forge engine…")
         initOnce()
-        // 1. Extract only the card scripts these decks use.
-        val cardsDir = File(workDir, "cardsfolder").apply { deleteRecursively(); mkdirs() }
-        val names = decks.flatMap { d -> (d.commanders + d.cards).map { it.name } }.distinct()
+        val names = decks.flatMap { d -> d.commanders + d.cards.map { it.first } }.distinct()
         val missing = mutableListOf<String>()
-        ZipFile(File(resRoot, "cardsfolder.zip")).use { zip ->
-            for (name in names) {
-                val entry = entryFor(name)
-                if (entry == null) { missing += name; continue }
-                val out = File(cardsDir, entry)
-                if (out.exists()) continue
-                out.parentFile?.mkdirs()
-                val ze = zip.getEntry(entry) ?: run { missing += name; null } ?: continue
-                zip.getInputStream(ze).use { input -> out.outputStream().use { input.copyTo(it) } }
+        val newNames = names.filter { it.lowercase() !in loadedNames }
+        if (!dbLoaded || newNames.isNotEmpty()) {
+            // 1. Extract the card scripts (every card used so far this session, so the database can be reused).
+            val cardsDir = File(workDir, "cardsfolder").apply { mkdirs() }
+            ZipFile(File(resRoot, "cardsfolder.zip")).use { zip ->
+                for (name in names) {
+                    val entry = entryFor(name) ?: continue
+                    val out = File(cardsDir, entry)
+                    if (out.exists()) continue
+                    out.parentFile?.mkdirs()
+                    val ze = zip.getEntry(entry) ?: continue
+                    zip.getInputStream(ze).use { input -> out.outputStream().use { input.copyTo(it) } }
+                }
             }
+            log("Loading card scripts, editions and tokens…")
+            // 2. Load them (plus editions and tokens) into Forge's card database.
+            val customEditions = File(workDir, "custom-editions").apply { mkdirs() }
+            StaticData(
+                CardStorageReader(cardsDir.path, null, false),
+                CardStorageReader(File(resRoot, "tokenscripts").path, null, false),
+                null, null,
+                File(resRoot, "editions").path, customEditions.path, File(resRoot, "blockdata").path, "",
+                "Latest Art All Editions",
+                false, false, false, false,
+            ).apply { setMulliganRule(forge.MulliganDefs.MulliganRule.London) }
+            loadedNames += names.map { it.lowercase() }
+            dbLoaded = true
+        } else {
+            log("Card database already loaded")
         }
-        control?.log("Loading ${names.size} card scripts, editions and tokens…")
-        // 2. Load them (plus editions and tokens) into Forge's card database.
-        val customEditions = File(workDir, "custom-editions").apply { mkdirs() }
-        StaticData(
-            CardStorageReader(cardsDir.path, null, false),
-            CardStorageReader(File(resRoot, "tokenscripts").path, null, false),
-            null, null,
-            File(resRoot, "editions").path, customEditions.path, File(resRoot, "blockdata").path, "",
-            "Latest Art All Editions",
-            false, false, false, false,
-        ).apply { setMulliganRule(forge.MulliganDefs.MulliganRule.London) }
-        control?.log("Building Forge decks…")
         // 3. Build Forge decks.
         forgeDecks.clear()
         for (d in decks) {
@@ -113,16 +107,16 @@ internal class ForgeEngine(
                 if (pc == null) missing += name else nameMap[pc.name.lowercase()] = name
                 return pc
             }
-            d.commanders.forEach { c -> resolve(c.name)?.let { fd.getOrCreate(DeckSection.Commander).add(it, 1) } }
-            d.cards.forEach { c -> resolve(c.name)?.let { fd.main.add(it, c.quantity) } }
+            d.commanders.forEach { c -> resolve(c)?.let { fd.getOrCreate(DeckSection.Commander).add(it, 1) } }
+            d.cards.forEach { (c, q) -> resolve(c)?.let { fd.main.add(it, q) } }
             forgeDecks[d.id] = PreparedDeck(d, fd, nameMap)
         }
         missingCards = missing.distinct().sorted()
-        if (missingCards.isNotEmpty()) control?.log("Forge doesn't know: ${missingCards.take(8).joinToString(", ")}")
+        if (missingCards.isNotEmpty()) log("Forge doesn't know: ${missingCards.take(8).joinToString(", ")}")
     }
 
-    override fun play(seats: List<Deck>, seed: Long): GameResult {
-        val prepared = seats.map { forgeDecks[it.id] ?: error("Deck ${it.name} wasn't prepared") }
+    fun play(seatDeckIds: List<String>, seed: Long, maxRounds: Int, maxMillis: Long, status: (String) -> Unit): GameResult {
+        val prepared = seatDeckIds.map { forgeDecks[it] ?: error("Deck $it wasn't prepared") }
         MyRandom.setRandom(Random(seed))
         val rules = GameRules(GameType.Commander).apply {
             setAppliedVariants(EnumSet.of(GameType.Commander))
@@ -136,15 +130,11 @@ internal class ForgeEngine(
         val match = Match(rules, players, "Commander Sim")
         val game = match.createGame()
         game.setNoGUIUser()
-        val ctl = control
         val gameStart = System.currentTimeMillis()
-        val label = ctl?.let { "Game ${it.gameIndex}/${it.gamesTotal}" } ?: "Game"
-        ctl?.log("$label: shuffling up")
-        val recorder = ForgeRecorder(game, prepared.map { it.nameMap }, maxRounds, maxMillisPerGame) { round ->
-            if (ctl != null) {
-                val secs = (System.currentTimeMillis() - gameStart) / 1000
-                ctl.status = "$label · round $round · ${secs / 60}:%02d".format(secs % 60)
-            }
+        status("shuffling up")
+        val recorder = ForgeRecorder(game, prepared.map { it.nameMap }, maxRounds, maxMillis) { round ->
+            val secs = (System.currentTimeMillis() - gameStart) / 1000
+            status("round $round · ${secs / 60}:%02d".format(secs % 60))
         }
         game.subscribeToEvents(recorder)
 
@@ -158,27 +148,17 @@ internal class ForgeEngine(
             }
         }, "forge-game", 64L * 1024 * 1024)
         t.isDaemon = true
-        try {
-            t.start()
-        } catch (e: Throwable) {
-            // Couldn't get a big stack: play on this thread instead.
-            ctl?.log("Large-stack thread unavailable (${e.javaClass.simpleName}); using a normal thread")
-            try { match.startGame(game) } catch (x: Throwable) { failure = x }
-        }
-        t.join(maxMillisPerGame + 30_000)
+        t.start()
+        t.join(maxMillis + 30_000)
         if (t.isAlive) {
-            // The AI is stuck inside a turn: force a draw and give it a moment to unwind.
+            // The AI is stuck inside a turn: end the game and give it a moment to unwind.
             runCatching { game.setGameOver(GameEndReason.Draw) }
             t.join(10_000)
         }
-        failure?.let { f ->
-            ctl?.log("$label error: ${f.javaClass.simpleName}: ${f.message} @ ${f.stackTrace.take(3).joinToString(" < ")}")
-            if (f is VirtualMachineError) throw f
-        }
-        if (t.isAlive) ctl?.log("$label didn't finish in time; counted as a draw")
-        ctl?.log("$label done in ${(System.currentTimeMillis() - gameStart) / 1000}s")
-        lastDiagnostics = "events=${recorder.eventCounts.toSortedMap()} errors=${recorder.errors} life=${recorder.lifeTotals()} failure=$failure"
-        return recorder.finish(timedOut = t.isAlive || failure != null)
+        failure?.let { if (it is VirtualMachineError) throw it }
+        lastDiagnostics = "events=${recorder.eventCounts.toSortedMap()} errors=${recorder.errors} failure=" +
+            (failure?.let { "${it.javaClass.simpleName}: ${it.message} @ ${it.stackTrace.take(3).joinToString(" < ")}" } ?: "none")
+        return recorder.finish(stopped = t.isAlive || failure != null)
     }
 
     companion object {

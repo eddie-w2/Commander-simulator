@@ -10,6 +10,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:largeHeap="true"
         android:theme="@style/Theme.CommanderSim">
         <activity
             android:name=".MainActivity"
@@ -20,6 +21,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".sim.forge.ForgeWorker1" android:process=":forge1" android:exported="false" />
+        <service android:name=".sim.forge.ForgeWorker2" android:process=":forge2" android:exported="false" />
+        <service android:name=".sim.forge.ForgeWorker3" android:process=":forge3" android:exported="false" />
+        <service android:name=".sim.forge.ForgeWorker4" android:process=":forge4" android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

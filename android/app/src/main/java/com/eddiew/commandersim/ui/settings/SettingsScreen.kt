@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -171,6 +172,8 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
             }
 
+            ForgeEnginePanel(vm)
+
             HudPanel(title = "Backup & restore") {
                 TileRow(
                     Triple("Decks", "${decks.size}", "${decks.count { it.owned }} owned"),
@@ -242,5 +245,71 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
             },
             dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text("CANCEL", color = Hud.Muted) } },
         )
+    }
+}
+
+@Composable
+private fun ForgeEnginePanel(vm: AppViewModel) {
+    val scope = rememberCoroutineScope()
+    val active by vm.forgePacks.active.collectAsStateWithLifecycle()
+    val offer by vm.packOffer.collectAsStateWithLifecycle()
+    val progress by vm.packProgress.collectAsStateWithLifecycle()
+    var installed by remember { mutableStateOf(vm.forgePacks.downloaded()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    HudPanel(title = "Forge engine", accent = if (offer != null) Hud.Cyan else Hud.Electric) {
+        Text(
+            active?.let { it.manifest.label + if (it.bundled) " · built in" else " · downloaded" } ?: "Not loaded yet",
+            style = MaterialTheme.typography.bodyMedium, color = Hud.Text,
+        )
+        Text("Forge updates come as engine packs from GitHub, separate from app updates. The app checks at every launch and asks before downloading.",
+            style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+        Spacer(Modifier.height(8.dp))
+        val o = offer
+        val p = progress
+        when {
+            p != null -> {
+                NeonBar(p)
+                Text("Downloading… ${(p * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
+            }
+            o != null -> HudButton("Download ${o.manifest.label} (${"%.0f".format(o.manifest.size / 1e6)} MB)", {
+                scope.launch {
+                    message = vm.downloadForgePack()
+                    installed = vm.forgePacks.downloaded()
+                }
+            }, Modifier.fillMaxWidth())
+            else -> HudOutlineButton(if (checking) "Checking…" else "Check for a newer engine", {
+                if (!checking) {
+                    checking = true
+                    scope.launch {
+                        message = try {
+                            if (vm.checkForgePack() == null) "You have the latest Forge engine." else null
+                        } catch (e: Exception) {
+                            "Couldn't reach GitHub: ${e.message}"
+                        }
+                        checking = false
+                    }
+                }
+            }, Modifier.fillMaxWidth())
+        }
+        message?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, style = MaterialTheme.typography.bodySmall, color = Hud.Ice)
+        }
+        val choices = installed + listOfNotNull(runCatching { vm.forgePacks.bundled() }.getOrNull())
+        if (choices.size > 1) {
+            Spacer(Modifier.height(10.dp))
+            Text("INSTALLED ENGINES", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
+            choices.forEach { pack ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(pack.manifest.label, style = MaterialTheme.typography.bodyMedium, color = if (pack.id == active?.id) Hud.Cyan else Hud.Text)
+                        Text(if (pack.bundled) "Built into the app" else "Downloaded", style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+                    }
+                    if (pack.id == active?.id) Text("IN USE", style = MaterialTheme.typography.labelSmall, color = Hud.Cyan)
+                    else HudOutlineButton("Use", { vm.selectForgePack(pack.id); message = "Switched to ${pack.manifest.label}." })
+                }
+            }
+        }
     }
 }

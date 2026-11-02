@@ -1,0 +1,103 @@
+name: Forge pack
+
+# Builds Forge's latest master into a "Forge pack" (engine + our adapter + card data) and publishes it to the
+# `forge-pack` release, so the app can update Forge without an app update. Skips if master hasn't changed.
+# If Forge changes in a way our adapter can't handle, the build or smoke game fails and nothing is published.
+
+on:
+  schedule:
+    - cron: "17 7 * * *" # daily
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if this Forge commit is already published"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Find Forge master
+        id: forge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=$(git ls-remote https://github.com/Card-Forge/forge.git refs/heads/master | cut -f1)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          PUBLISHED=$(gh release download forge-pack --repo "$GITHUB_REPOSITORY" --pattern manifest.json --output - 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('forgeCommit',''))" 2>/dev/null || true)
+          echo "Forge master: $SHA, published: ${PUBLISHED:-none}"
+          if [ "$SHA" = "$PUBLISHED" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Forge engine and card data
+        if: steps.forge.outputs.skip != 'true'
+        env:
+          FORGE_REF: ${{ steps.forge.outputs.sha }}
+        run: tools/build-forge.sh
+
+      - name: Smoke game (real Forge game must run and record damage)
+        if: steps.forge.outputs.skip != 'true'
+        working-directory: android
+        run: |
+          mkdir -p "$RUNNER_TEMP/forge-res"
+          unzip -q -o forgepack/src/main/assets/forge-res.zip -d "$RUNNER_TEMP/forge-res"
+          FORGE_RES="$RUNNER_TEMP/forge-res" ./gradlew --no-daemon :forgepack:testReleaseUnitTest
+
+      - name: Build pack
+        if: steps.forge.outputs.skip != 'true'
+        working-directory: android
+        run: ./gradlew --no-daemon :forgepack:assembleRelease
+
+      - name: Write manifest
+        if: steps.forge.outputs.skip != 'true'
+        run: |
+          mkdir -p out
+          cp android/forgepack/build/outputs/apk/release/forgepack-release-unsigned.apk out/forge-pack.apk
+          KOTLIN=$(grep -oP '^kotlin = "\K[^"]+' android/gradle/libs.versions.toml)
+          API=$(grep -oP 'const val ENGINE_API_VERSION = \K[0-9]+' android/engine-api/src/main/kotlin/com/eddiew/commandersim/sim/GameTypes.kt)
+          python3 - "$KOTLIN" "$API" <<'PY'
+          import hashlib, json, os, sys, datetime
+          apk = "out/forge-pack.apk"
+          m = {
+              "forgeCommit": os.environ["FORGE_SHA"],
+              "forgeDate": open("build/FORGE_DATE").read().strip() if os.path.exists("build/FORGE_DATE") else None,
+              "apiVersion": int(sys.argv[2]),
+              "kotlin": sys.argv[1],
+              "sha256": hashlib.sha256(open(apk, "rb").read()).hexdigest(),
+              "size": os.path.getsize(apk),
+              "builtAt": datetime.datetime.utcnow().isoformat() + "Z",
+          }
+          json.dump(m, open("out/manifest.json", "w"), indent=2)
+          print(m)
+          PY
+        env:
+          FORGE_SHA: ${{ steps.forge.outputs.sha }}
+
+      - name: Publish to the forge-pack release
+        if: steps.forge.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: forge-pack
+          name: Forge engine pack (latest)
+          body: |
+            Forge engine pack built from Card-Forge/forge@${{ steps.forge.outputs.sha }}.
+            The app downloads this automatically (it asks first). Not an app release.
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: |
+            out/forge-pack.apk
+            out/manifest.json

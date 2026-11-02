@@ -44,6 +44,7 @@ import com.eddiew.commandersim.ui.components.Notice
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.TileRow
 import com.eddiew.commandersim.ui.components.num
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 
 @Composable
@@ -205,7 +206,7 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
             item {
                 HudPanel(title = "${type.label} · ${byType[type]}") {
                     all.filter { it.type == type }.sortedWith(compareBy({ it.manaValue ?: 99.0 }, { it.name })).forEach { c ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().cardPress(c.name).padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("${c.quantity}×", style = MaterialTheme.typography.labelMedium, color = Hud.Dim, modifier = Modifier.width(30.dp))
                             Text(
                                 c.name, style = MaterialTheme.typography.bodyMedium,

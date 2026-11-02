@@ -1,4 +1,4 @@
-package com.eddiew.commandersim.sim.forge
+package com.eddiew.commandersim.forgepack
 
 import com.eddiew.commandersim.data.model.CardType
 import com.eddiew.commandersim.data.model.EndCondition
@@ -17,6 +17,10 @@ import forge.game.event.GameEventBlockersDeclared
 import forge.game.event.GameEventCardChangeZone
 import forge.game.event.GameEventCardCounters
 import forge.game.event.GameEventCardDamaged
+import forge.game.event.GameEventCardStatsChanged
+import forge.game.event.GameEventPlayerPriority
+import forge.game.event.GameEventTurnPhase
+import forge.game.event.GameEventZone
 import forge.game.event.GameEventLandPlayed
 import forge.game.event.GameEventMulligan
 import forge.game.event.GameEventPlayerDamaged
@@ -109,6 +113,8 @@ internal class ForgeRecorder(
 
     @Subscribe
     fun receive(evt: GameEvent) {
+        // Most events (stats changes, priority, phases) aren't recorded; return early to keep the game fast.
+        if (evt is GameEventCardStatsChanged || evt is GameEventPlayerPriority || evt is GameEventTurnPhase || evt is GameEventZone) return
         eventCounts.merge(evt.javaClass.simpleName, 1, Int::plus)
         try {
             when (evt) {
@@ -372,19 +378,34 @@ internal class ForgeRecorder(
         }
     }
 
-    /** Builds the result once the game has ended (or been stopped). */
-    fun finish(timedOut: Boolean): GameResult {
+    /** Life + 2 × creature power + permanents: used to score games stopped at the round or time limit. */
+    private fun boardScore(i: Int): Int {
+        val p = players[i]
+        val field = runCatching { p.getCardsIn(ZoneType.Battlefield) }.getOrNull() ?: return p.life
+        return p.life + 2 * field.filter { it.isCreature }.sumOf { maxOf(0, it.netPower) } + field.size
+    }
+
+    /** Builds the result once the game has ended. [stopped] = it was cut off by a limit or an error. */
+    fun finish(stopped: Boolean): GameResult {
         checkEliminations()
         val outcome = runCatching { game.outcome }.getOrNull()
-        val winner = if (timedOut || forcedDraw || outcome == null || outcome.isDraw) null
-        else players.indices.firstOrNull { !players[it].hasLost() }
-        val rounds = (turnsTaken.maxOrNull() ?: 1).coerceAtLeast(1)
-        if (winner != null) {
-            tracks[winner].place = 1
-        } else {
-            players.indices.filter { !eliminated[it] }.sortedByDescending { players[it].life }
-                .forEachIndexed { rank, i -> tracks[i].place = rank + 1 }
+        val alive = players.indices.filter { !eliminated[it] }
+        val unfinished = stopped || forcedDraw || outcome == null || outcome.isDraw
+        val scores = alive.associateWith { boardScore(it) }
+        var adjudicated = false
+        val winner: Int? = when {
+            !unfinished -> players.indices.firstOrNull { !players[it].hasLost() }
+            alive.size >= 2 -> {
+                // Score the game instead of calling it a draw, unless the top two are tied.
+                val ranked = alive.sortedByDescending { scores[it] }
+                if (scores[ranked[0]] != scores[ranked[1]]) { adjudicated = true; ranked[0] } else null
+            }
+            else -> alive.singleOrNull()
         }
+        val rounds = (turnsTaken.maxOrNull() ?: 1).coerceAtLeast(1)
+        if (winner != null) tracks[winner].place = 1
+        alive.filter { it != winner }.sortedByDescending { scores[it] }
+            .forEachIndexed { rank, i -> tracks[i].place = rank + if (winner != null) 2 else 1 }
         // Eliminated players are at 0 life for the rest of the game.
         for (i in players.indices) {
             if (!eliminated[i]) continue
@@ -393,10 +414,15 @@ internal class ForgeRecorder(
         val position = IntArray(n) { s -> turnOrder.indexOf(s).let { if (it < 0) s else it } }
         return GameResult(
             winnerSeat = winner,
-            winCondition = if (winner != null) lastCause ?: EndCondition.ALT_WIN else EndCondition.TIMEOUT,
+            winCondition = when {
+                winner == null -> EndCondition.TIMEOUT
+                adjudicated -> EndCondition.ADJUDICATED
+                else -> lastCause ?: EndCondition.ALT_WIN
+            },
             rounds = rounds.coerceAtMost(MAX_TURNS),
             tracks = tracks,
             turnPosition = position,
+            adjudicated = adjudicated,
         )
     }
 }

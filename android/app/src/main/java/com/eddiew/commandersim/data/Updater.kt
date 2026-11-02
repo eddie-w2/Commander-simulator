@@ -79,44 +79,7 @@ class Updater(private val context: Context) {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val out = File(dir, "commander-sim-${release.version}.apk")
-        var url = URL(release.apkUrl)
-        var conn: HttpURLConnection
-        // GitHub redirects to its file CDN; follow manually in case the redirect changes host.
-        var hops = 0
-        while (true) {
-            conn = url.openConnection() as HttpURLConnection
-            conn.instanceFollowRedirects = false
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 60_000
-            conn.setRequestProperty("User-Agent", "CommanderSim-Android")
-            val code = conn.responseCode
-            if (code in 300..399 && hops < 5) {
-                url = URL(url, conn.getHeaderField("Location"))
-                conn.disconnect()
-                hops++
-                continue
-            }
-            if (code !in 200..299) error("Download failed (HTTP $code)")
-            break
-        }
-        try {
-            val total = conn.contentLengthLong.takeIf { it > 0 } ?: release.apkSize
-            conn.inputStream.use { input ->
-                out.outputStream().use { output ->
-                    val buf = ByteArray(64 * 1024)
-                    var done = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        output.write(buf, 0, n)
-                        done += n
-                        if (total > 0) onProgress((done.toFloat() / total).coerceIn(0f, 1f))
-                    }
-                }
-            }
-        } finally {
-            conn.disconnect()
-        }
+        httpDownload(release.apkUrl, out, release.apkSize, onProgress)
         out
     }
 

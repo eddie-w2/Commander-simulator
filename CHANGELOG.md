@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.01
+- **Forge engine packs:** Forge now ships as a separate "engine pack" (Forge's engine + card data). A daily GitHub job builds Forge's latest code, and the pack is published only if a real smoke game passes. The app checks for a new pack at every launch and asks before downloading it. Settings → Forge engine shows the installed engine, can check now, and can switch back to an earlier or the built-in engine. App updates are no longer needed for Forge updates.
+- **Faster Forge:**
+  - The app is now a release (non-debuggable) build, which Android runs fully optimised.
+  - Games run in parallel in separate worker processes (Simulate → Parallel games, 1–4). A crash or out-of-memory in one game no longer takes the app down.
+  - Each worker keeps its card database between runs.
+  - The recorder skips events it doesn't use.
+  - Games are capped at 18 rounds, and unfinished games are scored on life and board instead of counted as draws. The results say how many were scored.
+- **Card details:** long-press any card name (deck lists, card tables, report rows, shared cards, swaps) to see its Scryfall card: image, rules text, type, P/T, legality, price and more. The card detail screen also has a Card text button.
+- **Expected-value lines on charts:**
+  - Lands in play and mana available: 1 per round.
+  - Cards drawn: a 1-per-round draw step, plus a new running-total chart.
+  - Land drop rate: 100%.
+  - Life charts: starting life of 40.
+
 ## v0.1.04
 - Forge runs show live progress: the current game, round and time, updated every second, plus a run log (Show log) covering each start-up step.
 - If a run fails, the error and log are shown and can be copied to share.

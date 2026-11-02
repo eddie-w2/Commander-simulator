@@ -16,7 +16,8 @@ import kotlin.random.Random
  * It exists so every statistic in docs/STATS.md has internally consistent numbers to display.
  */
 
-internal const val MAX_TURNS = 16
+/** Round cap of the sample model. */
+internal const val TOY_MAX_ROUNDS = 16
 
 internal enum class Role { LAND, CREATURE, REMOVAL, COUNTER, DRAW, WIPE, BURN, DRAIN, ROCK, ENGINE, OTHER }
 
@@ -118,104 +119,16 @@ internal class DeckProfile(val deck: Deck, val library: List<ToyCard>, val comma
     }
 }
 
-internal class CardTrack {
-    var seen = false
-    var inOpening = false
-    var drawnRound = -1
-    var casts = 0
-    var firstCastRound = -1
-    var damage = 0
-    var combatDamage = 0
-    var nonCombatDamage = 0
-    var killShots = 0
-    var removals = 0
-    var removed = 0
-    var countered = 0
-    var dmgBySeat: IntArray? = null
-    var dmgByRound: IntArray? = null
-    val removedBy = HashMap<String, Int>() // "card|seat"
-}
-
-/** Everything one player did in one game. */
-internal class PlayerTrack(val seats: Int) {
-    var drawn = 0
-    val drawsByTurn = IntArray(MAX_TURNS)
-    val handByTurn = IntArray(MAX_TURNS) { -1 }
-    val landsInPlayByTurn = IntArray(MAX_TURNS) { -1 }
-    val lifeByTurn = IntArray(MAX_TURNS) { -1 }
-    var maxHand = 0
-    var discarded = 0
-    var landsPlayed = 0
-    val landByTurn = BooleanArray(MAX_TURNS)
-    val manaByTurn = IntArray(MAX_TURNS)
-    var turnsTaken = 0
-    var mulligans = 0
-    var milled = 0
-
-    var dmgPlayers = 0
-    var dmgCombat = 0
-    var dmgNonCombat = 0
-    var dmgCommander = 0
-    var dmgCreatures = 0
-    var taken = 0
-    var takenCombat = 0
-    var takenNonCombat = 0
-    var takenCommander = 0
-    var lifeGained = 0
-    val dmgByTurn = IntArray(MAX_TURNS)
-    val takenByTurn = IntArray(MAX_TURNS)
-    val dmgBySeat = IntArray(seats)
-    val takenBySeat = IntArray(seats)
-    val takenByCard = HashMap<String, Int>() // "card|seat"
-    var kills = 0
-    var lethalBy: String? = null // "card|seat"
-
-    val cards = HashMap<String, CardTrack>()
-    fun card(name: String) = cards.getOrPut(name) { CardTrack() }
-
-    var removalSpells = 0
-    var permsRemoved = 0
-    val removedByType = HashMap<CardType, Int>()
-    var received = 0
-    var counters = 0
-    var wipes = 0
-    var sacrificed = 0
-    val removalAtSeat = IntArray(seats)
-    val ownRemoved = HashMap<String, Int>()
-
-    var cmdCasts = 0
-    var cmdFirstCast = -1
-    var cmdRemoved = 0
-
-    var attacks = 0
-    var attackersTotal = 0
-    var blocks = 0
-    var creaturesLost = 0
-
-    val permsByTurn = IntArray(MAX_TURNS) { -1 }
-    val creaturesByTurn = IntArray(MAX_TURNS) { -1 }
-    var tokens = 0
-    var counterPlaced = 0
-
-    var place = 0
-    var eliminatedTurn = -1
-    var lossCause: EndCondition? = null
-}
-
-internal class GameResult(
-    val winnerSeat: Int?,
-    val winCondition: EndCondition?,
-    val rounds: Int,
-    val tracks: List<PlayerTrack>,
-    /** Seat (deck order) → actual turn-order position, when the engine chose who goes first. */
-    val turnPosition: IntArray? = null,
-)
-
 /** Something that can play one game between decks: the sample model or Forge. */
 internal interface GamePlayer {
     /** Called once per simulation with every deck that will play. */
     fun prepare(decks: List<Deck>, control: SimControl) {}
+    /** Must be safe to call from [parallelism] threads at once. */
     fun play(seats: List<Deck>, seed: Long): GameResult
+    /** How many games can run at the same time. */
+    val parallelism: Int get() = 1
+    /** Called when the simulation ends. */
+    fun close() {}
 }
 
 /** The simplified sample model. */
@@ -255,7 +168,7 @@ internal class ToyGame(private val profiles: List<DeckProfile>, private val rng:
     fun play(): GameResult {
         players.forEach { openingHand(it) }
         var winner: Int? = null
-        loop@ while (round < MAX_TURNS) {
+        loop@ while (round < TOY_MAX_ROUNDS) {
             for (p in players) {
                 if (!p.alive) continue
                 takeTurn(p)
@@ -268,7 +181,7 @@ internal class ToyGame(private val profiles: List<DeckProfile>, private val rng:
             for (p in players) p.track.lifeByTurn[round] = if (p.alive) p.life else 0
             round++
         }
-        if (round < MAX_TURNS) for (p in players) p.track.lifeByTurn[round] = if (p.alive) p.life else 0
+        if (round < TOY_MAX_ROUNDS) for (p in players) p.track.lifeByTurn[round] = if (p.alive) p.life else 0
         val alive = players.filter { it.alive }
         if (winner != null) {
             players[winner].track.place = 1
@@ -276,7 +189,7 @@ internal class ToyGame(private val profiles: List<DeckProfile>, private val rng:
             // Timeout: surviving players ranked by life, the game counts as a draw.
             alive.sortedByDescending { it.life }.forEachIndexed { i, p -> p.track.place = i + 1 }
         }
-        return GameResult(winner, if (winner != null) lastCause else EndCondition.TIMEOUT, min(round + 1, MAX_TURNS), players.map { it.track })
+        return GameResult(winner, if (winner != null) lastCause else EndCondition.TIMEOUT, min(round + 1, TOY_MAX_ROUNDS), players.map { it.track })
     }
 
     private fun draw(p: PlayerState, count: Int, turnIdx: Int?) {

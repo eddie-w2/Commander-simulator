@@ -13,8 +13,8 @@ android {
         applicationId = "com.eddiew.commandersim"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.04"
+        versionCode = 5
+        versionName = "0.2.01"
     }
 
     signingConfigs {
@@ -30,51 +30,33 @@ android {
 
     buildTypes {
         release {
+            // Not debuggable, so Android runs it fully optimised (Forge games are much faster).
+            // Same key as debug builds, so it installs over them.
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
         }
+    }
+    sourceSets {
+        getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/forgepack-assets"))
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // Forge targets Java 17; backport newer java.util APIs for older Android versions.
-        isCoreLibraryDesugaringEnabled = true
     }
-    packaging {
-        resources {
-            excludes += setOf(
-                "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES", "META-INF/INDEX.LIST",
-                "META-INF/*.md", "META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/versions/*/module-info.class",
-                "module-info.class",
-            )
-        }
-    }
-    testOptions {
-        unitTests.all {
-            it.maxHeapSize = "3g"
-            it.jvmArgs("-Xss64m")
-        }
+    androidResources {
+        noCompress += "apk"
     }
     kotlinOptions {
         jvmTarget = "17"
     }
     buildFeatures {
         compose = true
+        aidl = true
     }
 }
 
 dependencies {
-    // Forge game engine: built by tools/build-forge.sh into libs/forge (not checked in).
-    implementation(fileTree(mapOf("dir" to "libs/forge", "include" to listOf("*.jar"))))
-    implementation(libs.guava)
-    implementation(libs.commons.lang3)
-    implementation(libs.commons.text)
-    implementation(libs.commons.math3)
-    implementation(libs.jgrapht.core)
-    implementation(libs.sentry)
-    implementation(libs.tinylog.api)
-    implementation(libs.tinylog.impl)
-    coreLibraryDesugaring(libs.desugar.jdk.libs)
+    implementation(project(":engine-api"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -102,3 +84,24 @@ tasks.withType<Test>().configureEach {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+// Bundle the Forge pack (engine + card data, see :forgepack) as a fallback, for when no newer pack has been
+// downloaded. bundled.txt identifies it: Forge commit, engine API version, Kotlin version.
+val bundleForgePack by tasks.registering {
+    dependsOn(":forgepack:assembleRelease")
+    val outDir = layout.buildDirectory.dir("generated/forgepack-assets/forge")
+    val packApk = rootProject.file("forgepack/build/outputs/apk/release/forgepack-release-unsigned.apk")
+    val forgeVersion = rootProject.file("../forge.version")
+    inputs.file(packApk)
+    inputs.file(forgeVersion)
+    outputs.dir(outDir)
+    doLast {
+        val dir = outDir.get().asFile
+        dir.mkdirs()
+        packApk.copyTo(java.io.File(dir, "forge-pack.apk"), overwrite = true)
+        java.io.File(dir, "bundled.txt").writeText(
+            "forgeCommit=${forgeVersion.readText().trim()}\napiVersion=1\nkotlin=${libs.versions.kotlin.get()}\nsize=${packApk.length()}\n",
+        )
+    }
+}
+tasks.named("preBuild") { dependsOn(bundleForgePack) }

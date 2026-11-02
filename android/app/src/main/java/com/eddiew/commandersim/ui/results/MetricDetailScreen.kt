@@ -39,7 +39,9 @@ import com.eddiew.commandersim.ui.components.Heatmap
 import com.eddiew.commandersim.ui.components.HudChip
 import com.eddiew.commandersim.ui.components.HudOutlineButton
 import com.eddiew.commandersim.ui.components.HudPanel
+import com.eddiew.commandersim.ui.components.Expected
 import com.eddiew.commandersim.ui.components.LineChart
+import com.eddiew.commandersim.ui.components.cumulative
 import com.eddiew.commandersim.ui.components.NeonBar
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.Series
@@ -48,6 +50,7 @@ import com.eddiew.commandersim.ui.components.TileRow
 import com.eddiew.commandersim.ui.components.num
 import com.eddiew.commandersim.ui.components.pct
 import com.eddiew.commandersim.ui.components.signedPct
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 import com.eddiew.commandersim.ui.theme.Mono
 
@@ -183,7 +186,7 @@ private fun CardTable(
     }
     val max = bar?.let { f -> cards.maxOfOrNull(f)?.takeIf { it > 0 } } ?: 1.0
     cards.forEach { c ->
-        Column(Modifier.fillMaxWidth().clickable { onCard(c.name) }.padding(vertical = 4.dp)) {
+        Column(Modifier.fillMaxWidth().cardPress(c.name) { onCard(c.name) }.padding(vertical = 4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(c.name, style = MaterialTheme.typography.bodySmall, color = Hud.Text, modifier = Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -271,7 +274,7 @@ private fun LazyListScope.outcomeDetail(r: SimulationReport, d: DeckReport, nav:
     }
     item {
         HudPanel(title = "Life total · wins vs losses") {
-            LineChart(listOf(Series("Wins", d.life.avgLifeByTurnWins, Hud.Positive), Series("Losses", d.life.avgLifeByTurnLosses, Hud.Negative)))
+            LineChart(listOf(Series("Wins", d.life.avgLifeByTurnWins, Hud.Positive), Series("Losses", d.life.avgLifeByTurnLosses, Hud.Negative)), reference = Expected.constant(40.0, "Starting life"))
         }
     }
 }
@@ -375,7 +378,7 @@ private fun LazyListScope.dealtDetail(r: SimulationReport, d: DeckReport, m: Met
     item {
         HudPanel(title = "Kill shots by card · total") {
             BarList(dm.sources.filter { it.killShots > 0 }.sortedByDescending { it.killShots }.map { it.card to it.killShots.toDouble() },
-                valueFormat = { num(it, 0) })
+                valueFormat = { num(it, 0) }, cardLabels = true)
         }
     }
     item {
@@ -417,6 +420,7 @@ private fun LazyListScope.takenDetail(r: SimulationReport, d: DeckReport, nav: M
                     Series("Losses", d.life.avgLifeByTurnLosses, Hud.Negative),
                     Series("Opponents", d.life.opponentsAvgLifeByTurn, Hud.Muted),
                 ),
+                reference = Expected.constant(40.0, "Starting life"),
             )
         }
     }
@@ -427,13 +431,13 @@ private fun LazyListScope.takenDetail(r: SimulationReport, d: DeckReport, nav: M
     }
     item {
         HudPanel(title = "Opposing cards that hurt you most · per game", accent = Hud.Negative) {
-            BarList(dm.takenByCard.map { cardFrom(r, it.name) to it.value }, color = Hud.Negative)
+            BarList(dm.takenByCard.map { cardFrom(r, it.name) to it.value }, color = Hud.Negative, cardLabels = true)
         }
     }
     item {
         HudPanel(title = "Final blow against you · count", accent = Hud.Negative) {
             BarList(dm.lethalAgainstUs.map { "${it.card} · ${r.name(it.deckId)}" to it.count.toDouble() }, color = Hud.Negative,
-                valueFormat = { num(it, 0) })
+                valueFormat = { num(it, 0) }, cardLabels = true)
         }
     }
     item {
@@ -517,7 +521,7 @@ private fun LazyListScope.lostSections(r: SimulationReport, d: DeckReport, nav: 
             val agg = HashMap<String, Double>()
             d.cards.forEach { c -> c.removedBy.forEach { agg.merge(it.name, it.value, Double::plus) } }
             BarList(agg.entries.sortedByDescending { it.value }.take(10).map { cardFrom(r, it.key) to it.value },
-                color = Hud.Negative, valueFormat = { num(it, 0) })
+                color = Hud.Negative, valueFormat = { num(it, 0) }, cardLabels = true)
         }
     }
     item {
@@ -537,7 +541,7 @@ private fun LazyListScope.lostSections(r: SimulationReport, d: DeckReport, nav: 
             )
         }
     }
-    item { HudPanel(title = "Own cards removed most · per game") { BarList(rm.mostRemovedOwnCards.map { it.name to it.value }, valueFormat = { num(it, 2) }, color = Hud.Negative) } }
+    item { HudPanel(title = "Own cards removed most · per game") { BarList(rm.mostRemovedOwnCards.map { it.name to it.value }, valueFormat = { num(it, 2) }, color = Hud.Negative, cardLabels = true) } }
 }
 
 // ───────────────────────────── Card flow ─────────────────────────────
@@ -552,7 +556,8 @@ private fun LazyListScope.cardFlowDetail(d: DeckReport, m: Metric, nav: MetricNa
         )
     }
     item { TileRow(Tile("Milled", num(rs.avgMilled, 1), "per game") { nav.metric(Metric.MILLED) }, accent = Hud.Cyan) }
-    item { HudPanel(title = "Cards drawn per round") { LineChart(listOf(Series("Draws", rs.drawsPerTurn, Hud.Cyan)), yFormat = { num(it, 2) }) } }
+    item { HudPanel(title = "Cards drawn per round") { LineChart(listOf(Series("Draws", rs.drawsPerTurn, Hud.Cyan)), yFormat = { num(it, 2) }, reference = Expected.constant(1.0, "Draw step: 1 per round")) } }
+    item { HudPanel(title = "Cards drawn · running total") { LineChart(listOf(Series("Drawn", cumulative(rs.drawsPerTurn), Hud.Cyan)), reference = Expected.perRound("Expected: 1 per round")) } }
     item {
         val split = d.winLoss.series.firstOrNull { it.name == "Hand size" }
         HudPanel(title = "Hand size at start of round · wins vs losses") {
@@ -624,19 +629,21 @@ private fun LazyListScope.manaDetail(d: DeckReport, nav: MetricNav) {
         val split = d.winLoss.series.firstOrNull { it.name == "Lands in play" }
         HudPanel(title = "Lands in play · wins vs losses") {
             LineChart(listOfNotNull(Series("All", rs.landsInPlayByTurn, Hud.Electric),
-                split?.let { Series("Wins", it.wins, Hud.Positive) }, split?.let { Series("Losses", it.losses, Hud.Negative) }))
+                split?.let { Series("Wins", it.wins, Hud.Positive) }, split?.let { Series("Losses", it.losses, Hud.Negative) }),
+                reference = Expected.perRound("Expected: 1 land per round"))
         }
     }
     item {
         HudPanel(title = "Land drop hit rate") {
-            LineChart(listOf(Series("Land drop", rs.landDropHitRate, Hud.Positive)), fixedMax = 1.0, yFormat = { pct(it, 0) })
+            LineChart(listOf(Series("Land drop", rs.landDropHitRate, Hud.Positive)), fixedMax = 1.0, yFormat = { pct(it, 0) }, reference = Expected.constant(1.0, "Every round"))
         }
     }
     item {
         val split = d.winLoss.series.firstOrNull { it.name == "Mana spent per round" }
         HudPanel(title = "Mana spent per round · wins vs losses") {
             LineChart(listOfNotNull(Series("All", rs.avgManaSpentByTurn, Hud.Ice),
-                split?.let { Series("Wins", it.wins, Hud.Positive) }, split?.let { Series("Losses", it.losses, Hud.Negative) }))
+                split?.let { Series("Wins", it.wins, Hud.Positive) }, split?.let { Series("Losses", it.losses, Hud.Negative) }),
+                reference = Expected.perRound("Mana available at 1 land per round"))
         }
     }
     item {

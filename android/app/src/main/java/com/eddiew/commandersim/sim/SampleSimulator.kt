@@ -11,10 +11,16 @@ import com.eddiew.commandersim.data.model.SimMeta
 import com.eddiew.commandersim.data.model.SimulationReport
 import com.eddiew.commandersim.data.model.diffDecks
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.UUID
-import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -39,6 +45,15 @@ class SampleSimulator internal constructor(
 
     override suspend fun run(config: SimConfig, decks: List<Deck>, control: SimControl, onProgress: (Float) -> Unit): SimulationReport =
         withContext(Dispatchers.Default) {
+            try {
+                runInner(config, decks, control, onProgress)
+            } finally {
+                player.close()
+            }
+        }
+
+    private suspend fun runInner(config: SimConfig, decks: List<Deck>, control: SimControl, onProgress: (Float) -> Unit): SimulationReport =
+        run {
             val byId = decks.associateBy { it.id }
             val pool = config.deckIds.distinct().mapNotNull { byId[it] }
             control.log("Preparing ${pool.size} decks…")
@@ -58,9 +73,11 @@ class SampleSimulator internal constructor(
                 null
             }
             onProgress(1f)
-            require(run.games > 0) { "No games finished." }
+            require(run.games > 0) { "No games finished." + (run.firstError?.let { " First error: $it" } ?: "") }
             val extra = buildList {
                 addAll(notes())
+                if (run.adjudicated > 0) add("${run.adjudicated} of ${run.games} games reached the round limit and were scored on life and board.")
+                if (run.failed > 0) add("${run.failed} games failed and were skipped (${run.firstError}).")
                 if (control.stopRequested) add("Stopped early after ${run.games} games; results are less certain.")
             }
             run.report(comparison, ab?.let { listOf(it.aId to "A", it.bId to "B") }?.toMap() ?: emptyMap()).copy(notes = extra)
@@ -79,18 +96,21 @@ class SampleSimulator internal constructor(
         var games = 0
         var timeouts = 0
         var turnSum = 0L
-        var nanoSum = 0L
+        val nanoSum = AtomicLong(0)
+        var adjudicated = 0
         val roundHist = IntArray(MAX_TURNS)
 
-        fun play(seats: List<Deck>, gameSeed: Long): GameResult {
-            val start = System.nanoTime()
-            control.gameIndex = games + 1
-            val result = player.play(seats, gameSeed)
-            nanoSum += System.nanoTime() - start
+        var failed = 0
+        var firstError: String? = null
+
+        /** Adds one finished game to every statistic. */
+        fun record(seats: List<Deck>, result: GameResult) {
             games++
+            control.gameIndex = games + 1
             turnSum += result.rounds
             roundHist[(result.rounds - 1).coerceIn(0, MAX_TURNS - 1)]++
             if (result.winnerSeat == null) timeouts++
+            if (result.adjudicated) adjudicated++
             val ids = seats.map { it.id }
             seats.forEachIndexed { seat, deck ->
                 acc.getOrPut(deck.id) { DeckAccumulator(deck) }.add(result, seat, ids)
@@ -103,14 +123,49 @@ class SampleSimulator internal constructor(
                     pa.removal += result.tracks[seat].removalAtSeat[otherSeat]
                 }
             }
-            return result
+        }
+
+        inner class Job(val seats: List<Deck>, val seed: Long)
+
+        /**
+         * Plays [jobs] on up to [GamePlayer.parallelism] threads and hands each result to [onResult] on this
+         * coroutine, as games finish. Stops taking new games when the user asks to stop.
+         */
+        suspend fun execute(jobs: List<Job>, onResult: (Int, GameResult) -> Unit) = coroutineScope {
+            val next = AtomicInteger(0)
+            val out = Channel<Pair<Int, Result<GameResult>>>(Channel.UNLIMITED)
+            val threads = player.parallelism.coerceAtLeast(1)
+            val workers = List(threads) {
+                launch(Dispatchers.IO) {
+                    while (!control.stopRequested) {
+                        val i = next.getAndIncrement()
+                        if (i >= jobs.size) break
+                        val start = System.nanoTime()
+                        val r = runCatching { runInterruptible { player.play(jobs[i].seats, jobs[i].seed) } }
+                        if (r.exceptionOrNull() is CancellationException) throw r.exceptionOrNull()!!
+                        nanoSum.addAndGet(System.nanoTime() - start)
+                        out.send(i to r)
+                    }
+                }
+            }
+            launch { workers.joinAll(); out.close() }
+            var done = 0
+            for ((i, r) in out) {
+                done++
+                r.onSuccess { onResult(i, it) }.onFailure { e ->
+                    failed++
+                    if (firstError == null) firstError = e.message ?: e.javaClass.simpleName
+                    control.log("Game ${i + 1} failed: ${e.message}")
+                }
+                onProgress(done / jobs.size.toFloat())
+            }
         }
 
         /** Picks the [k] decks with the fewest games so far (random tie-break), so every deck plays about equally. */
         fun pickBalanced(from: List<Deck>, counts: HashMap<String, Int>, k: Int): List<Deck> =
             from.shuffled(rng).sortedBy { counts[it.id] ?: 0 }.take(k).onEach { counts.merge(it.id, 1, Int::plus) }
 
-        fun seatOrder(pod: List<Deck>, g: Int): List<Deck> =
+        fun seatOrder(pod: List<Deck>): List<Deck> =
             if (config.seatRotation) pod.shuffled(rng) else pod
 
         suspend fun pool(pool: List<Deck>) {
@@ -118,33 +173,39 @@ class SampleSimulator internal constructor(
             val total = ceil(pool.size * config.gamesPerDeck / podSize.toDouble()).toInt()
             control.gamesTotal = total
             val counts = HashMap<String, Int>()
-            val step = maxOf(1, total / 200)
-            for (g in 0 until total) {
-                coroutineContext.ensureActive()
-                if (control.stopRequested) break
-                play(seatOrder(pickBalanced(pool, counts, podSize), g), rng.nextLong())
-                if (g % step == 0) onProgress((g + 1) / total.toFloat())
-            }
+            val jobs = List(total) { Job(seatOrder(pickBalanced(pool, counts, podSize)), rng.nextLong()) }
+            execute(jobs) { i, r -> record(jobs[i].seats, r) }
         }
 
         suspend fun abTest(a: Deck, b: Deck, field: List<Deck>): AbComparison {
             val opps = min(config.podSize - 1, field.size)
             val counts = HashMap<String, Int>()
-            var n = config.gamesPerDeck
-            control.gamesTotal = n * 2
-            val step = maxOf(1, n / 200)
+            control.gamesTotal = config.gamesPerDeck * 2
+            // Each pair of jobs is the same game (opponents, seat, seed) with A and then B.
+            val seatOf = IntArray(config.gamesPerDeck)
+            val othersOf = ArrayList<List<Deck>>()
+            val jobs = ArrayList<Job>()
+            for (g in 0 until config.gamesPerDeck) {
+                val others = pickBalanced(field, counts, opps)
+                val seat = if (config.seatRotation) g % (opps + 1) else rng.nextInt(opps + 1)
+                val gameSeed = rng.nextLong()
+                seatOf[g] = seat
+                othersOf += others
+                jobs += Job(others.toMutableList().apply { add(seat, a) }, gameSeed)
+                jobs += Job(others.toMutableList().apply { add(seat, b) }, gameSeed)
+            }
+            val results = arrayOfNulls<GameResult>(jobs.size)
+            execute(jobs) { i, r -> results[i] = r; record(jobs[i].seats, r) }
+
+            var n = 0
             var aWins = 0; var bWins = 0; var onlyA = 0; var onlyB = 0
             var diffSum = 0.0; var diffSq = 0.0
             val perOpp = HashMap<String, IntArray>() // games, aWins, bWins
             for (g in 0 until config.gamesPerDeck) {
-                coroutineContext.ensureActive()
-                if (control.stopRequested) { n = g; break }
-                val others = pickBalanced(field, counts, opps)
-                val seat = if (config.seatRotation) g % (opps + 1) else rng.nextInt(opps + 1)
-                val gameSeed = rng.nextLong()
-                fun seats(x: Deck) = others.toMutableList().apply { add(seat, x) }
-                val ra = play(seats(a), gameSeed)
-                val rb = play(seats(b), gameSeed)
+                val ra = results[2 * g] ?: continue
+                val rb = results[2 * g + 1] ?: continue
+                n++
+                val seat = seatOf[g]
                 val wa = if (ra.winnerSeat == seat) 1 else 0
                 val wb = if (rb.winnerSeat == seat) 1 else 0
                 aWins += wa; bWins += wb
@@ -152,8 +213,7 @@ class SampleSimulator internal constructor(
                 if (wb == 1 && wa == 0) onlyB++
                 val d = (wb - wa).toDouble()
                 diffSum += d; diffSq += d * d
-                for (o in others) perOpp.getOrPut(o.id) { IntArray(3) }.let { it[0]++; it[1] += wa; it[2] += wb }
-                if (g % step == 0) onProgress((g + 1) / config.gamesPerDeck.toFloat())
+                for (o in othersOf[g]) perOpp.getOrPut(o.id) { IntArray(3) }.let { it[0]++; it[1] += wa; it[2] += wb }
             }
             n = n.coerceAtLeast(1)
             val mean = diffSum / n
@@ -194,7 +254,7 @@ class SampleSimulator internal constructor(
                 meta = SimMeta(
                     games = games, timeouts = timeouts, adjudicated = 0,
                     avgTurns = turnSum.toDouble() / games.coerceAtLeast(1),
-                    avgGameMs = nanoSum / 1e6 / games.coerceAtLeast(1),
+                    avgGameMs = nanoSum.get() / 1e6 / games.coerceAtLeast(1),
                     roundHistogram = roundHist.toList(),
                 ),
                 ab = fullAb,

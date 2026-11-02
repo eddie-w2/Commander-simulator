@@ -46,7 +46,9 @@ import com.eddiew.commandersim.ui.components.Heatmap
 import com.eddiew.commandersim.ui.components.HudChip
 import com.eddiew.commandersim.ui.components.HudOutlineButton
 import com.eddiew.commandersim.ui.components.HudPanel
+import com.eddiew.commandersim.ui.components.Expected
 import com.eddiew.commandersim.ui.components.LineChart
+import com.eddiew.commandersim.ui.components.cumulative
 import com.eddiew.commandersim.ui.components.NeonBar
 import com.eddiew.commandersim.ui.components.RadarChart
 import com.eddiew.commandersim.ui.components.ScreenHeader
@@ -57,6 +59,7 @@ import com.eddiew.commandersim.ui.components.DetailLink
 import com.eddiew.commandersim.ui.components.num
 import com.eddiew.commandersim.ui.components.pct
 import com.eddiew.commandersim.ui.components.signedPct
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 import com.eddiew.commandersim.ui.theme.Mono
 
@@ -244,7 +247,7 @@ private fun ImpactList(cards: List<CardStat>, onCard: (String) -> Unit) {
         return
     }
     cards.forEach { c ->
-        Row(Modifier.fillMaxWidth().clickable { onCard(c.name) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().cardPress(c.name) { onCard(c.name) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(c.name, style = MaterialTheme.typography.bodyMedium, color = Hud.Text, modifier = Modifier.weight(1f),
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             VerdictTag(c.verdict)
@@ -304,7 +307,7 @@ private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (St
             Spacer(Modifier.height(4.dp))
             val max = dm.sources.maxOfOrNull { it.perGame } ?: 1.0
             dm.sources.forEach { s ->
-                Column(Modifier.fillMaxWidth().clickable { onCard(s.card) }.padding(vertical = 4.dp)) {
+                Column(Modifier.fillMaxWidth().cardPress(s.card) { onCard(s.card) }.padding(vertical = 4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(s.card, style = MaterialTheme.typography.bodySmall, color = Hud.Text, modifier = Modifier.weight(1f),
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -367,6 +370,7 @@ private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (St
                     Series("You", d.life.avgLifeByTurn, Hud.Positive),
                     Series("Opponents", d.life.opponentsAvgLifeByTurn, Hud.Negative),
                 ),
+                reference = Expected.constant(40.0, "Starting life"),
             )
         }
     }
@@ -377,13 +381,13 @@ private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (St
     }
     item {
         HudPanel(title = "Opposing cards that hurt you most · per game", accent = Hud.Negative) {
-            BarList(dm.takenByCard.map { cardFrom(r, it.name) to it.value }, color = Hud.Negative)
+            BarList(dm.takenByCard.map { cardFrom(r, it.name) to it.value }, color = Hud.Negative, cardLabels = true)
         }
     }
     item {
         HudPanel(title = "Final blow against you · count", accent = Hud.Negative) {
             BarList(dm.lethalAgainstUs.map { "${it.card} · ${r.name(it.deckId)}" to it.count.toDouble() }, color = Hud.Negative,
-                valueFormat = { num(it, 0) })
+                valueFormat = { num(it, 0) }, cardLabels = true)
         }
     }
 }
@@ -453,7 +457,7 @@ private fun CardsTab(d: DeckReport, onCard: (String) -> Unit) {
 
 @Composable
 private fun CardRow(c: CardStat, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    Column(Modifier.fillMaxWidth().cardPress(c.name, onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(c.type.label.take(3).uppercase(), style = MaterialTheme.typography.labelSmall, color = Hud.Electric, modifier = Modifier.width(30.dp))
             Text(c.name, style = MaterialTheme.typography.bodyMedium, color = Hud.Text, modifier = Modifier.weight(1f),
@@ -539,12 +543,12 @@ private fun LazyListScope.threats(r: SimulationReport, d: DeckReport) {
     item {
         HudPanel(title = "Final blow against you", accent = Hud.Negative) {
             BarList(d.damage.lethalAgainstUs.map { "${it.card} · ${r.name(it.deckId)}" to it.count.toDouble() },
-                color = Hud.Negative, valueFormat = { num(it, 0) })
+                color = Hud.Negative, valueFormat = { num(it, 0) }, cardLabels = true)
         }
     }
     item {
         HudPanel(title = "Your cards opponents remove most · per game", accent = Hud.Negative) {
-            BarList(d.removal.mostRemovedOwnCards.map { it.name to it.value }, valueFormat = { num(it, 2) }, color = Hud.Negative)
+            BarList(d.removal.mostRemovedOwnCards.map { it.name to it.value }, valueFormat = { num(it, 2) }, color = Hud.Negative, cardLabels = true)
         }
     }
     item {
@@ -564,7 +568,7 @@ private fun NemesisList(r: SimulationReport, d: DeckReport, items: List<com.eddi
         return
     }
     items.forEach { n ->
-        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().cardPress(n.card).padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(n.card, style = MaterialTheme.typography.bodyMedium, color = Hud.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("${r.name(n.deckId)} · ${n.gamesFaced} games", style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
@@ -600,7 +604,7 @@ private fun LazyListScope.removal(r: SimulationReport, d: DeckReport, onCard: (S
         HudPanel(title = "Removal MVPs · removals per game", trailing = { DetailLink({ go(Metric.REMOVAL_CAST) }) }) {
             val mvps = d.cards.filter { it.removalsPerGame > 0 }.sortedByDescending { it.removalsPerGame }.take(10)
             mvps.forEach { c ->
-                Row(Modifier.fillMaxWidth().clickable { onCard(c.name) }.padding(vertical = 4.dp)) {
+                Row(Modifier.fillMaxWidth().cardPress(c.name) { onCard(c.name) }.padding(vertical = 4.dp)) {
                     Text(c.name, style = MaterialTheme.typography.bodySmall, color = Hud.Text, modifier = Modifier.weight(1f),
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(num(c.removalsPerGame, 2), style = MaterialTheme.typography.labelMedium, color = Hud.Cyan)
@@ -637,14 +641,19 @@ private fun LazyListScope.resources(d: DeckReport, go: (Metric) -> Unit) {
         )
     }
     item { HudPanel(title = "Hand size at start of round", trailing = { DetailLink({ go(Metric.MAX_HAND) }) }) { LineChart(listOf(Series("Hand", rs.avgHandSizeByTurn, Hud.Electric))) } }
-    item { HudPanel(title = "Cards drawn per round", trailing = { DetailLink({ go(Metric.CARDS_DRAWN) }) }) { LineChart(listOf(Series("Draws", rs.drawsPerTurn, Hud.Cyan)), yFormat = { num(it, 2) }) } }
-    item { HudPanel(title = "Lands in play", trailing = { DetailLink({ go(Metric.LANDS_PLAYED) }) }) { LineChart(listOf(Series("Lands", rs.landsInPlayByTurn, Hud.Positive))) } }
+    item { HudPanel(title = "Cards drawn per round", trailing = { DetailLink({ go(Metric.CARDS_DRAWN) }) }) { LineChart(listOf(Series("Draws", rs.drawsPerTurn, Hud.Cyan)), yFormat = { num(it, 2) }, reference = Expected.constant(1.0, "Draw step: 1 per round")) } }
     item {
-        HudPanel(title = "Land drop hit rate", trailing = { DetailLink({ go(Metric.LANDS_PLAYED) }) }) {
-            LineChart(listOf(Series("Land drop", rs.landDropHitRate, Hud.Positive)), fixedMax = 1.0, yFormat = { pct(it, 0) })
+        HudPanel(title = "Cards drawn · running total", trailing = { DetailLink({ go(Metric.CARDS_DRAWN) }) }) {
+            LineChart(listOf(Series("Drawn", cumulative(rs.drawsPerTurn), Hud.Cyan)), reference = Expected.perRound("Expected: 1 per round"))
         }
     }
-    item { HudPanel(title = "Mana spent per round", trailing = { DetailLink({ go(Metric.MANA_SPENT) }) }) { LineChart(listOf(Series("Mana", rs.avgManaSpentByTurn, Hud.Ice))) } }
+    item { HudPanel(title = "Lands in play", trailing = { DetailLink({ go(Metric.LANDS_PLAYED) }) }) { LineChart(listOf(Series("Lands", rs.landsInPlayByTurn, Hud.Positive)), reference = Expected.perRound("Expected: 1 land per round")) } }
+    item {
+        HudPanel(title = "Land drop hit rate", trailing = { DetailLink({ go(Metric.LANDS_PLAYED) }) }) {
+            LineChart(listOf(Series("Land drop", rs.landDropHitRate, Hud.Positive)), fixedMax = 1.0, yFormat = { pct(it, 0) }, reference = Expected.constant(1.0, "Every round"))
+        }
+    }
+    item { HudPanel(title = "Mana spent per round", trailing = { DetailLink({ go(Metric.MANA_SPENT) }) }) { LineChart(listOf(Series("Mana", rs.avgManaSpentByTurn, Hud.Ice)), reference = Expected.perRound("Mana available at 1 land per round")) } }
 }
 
 // ───────────────────────────── Combat & board ─────────────────────────────

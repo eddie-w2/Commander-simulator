@@ -80,11 +80,14 @@ fun LineChart(
     xLabel: String = "TURN",
     fixedMax: Double? = null,
     baseline: Double? = null,
+    /** An "expected" line (e.g. 1 land per round), drawn dashed for comparison. */
+    reference: Series? = null,
 ) {
     val reveal = rememberReveal(series)
     val tm = rememberTextMeasurer()
     val points = series.maxOfOrNull { s -> s.values.indexOfLast { it > 0.0001 } + 1 }?.coerceAtLeast(2) ?: 2
-    val maxV = fixedMax ?: (series.flatMap { it.values.take(points) }.maxOrNull() ?: 1.0).let { if (it <= 0) 1.0 else it * 1.1 }
+    val maxV = fixedMax ?: (series.flatMap { it.values.take(points) } + (reference?.values?.take(points).orEmpty()))
+        .maxOrNull().let { if (it == null || it <= 0) 1.0 else it * 1.1 }
     Column(modifier.fillMaxWidth()) {
         Canvas(Modifier.fillMaxWidth().height(height)) {
             val left = 34.dp.toPx()
@@ -111,6 +114,15 @@ fun LineChart(
                 drawLine(Hud.Warn.copy(alpha = 0.7f), Offset(left, y), Offset(size.width, y), 1.5f,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
             }
+            reference?.let { ref ->
+                val p = Path()
+                ref.values.take(points).forEachIndexed { i, v ->
+                    val x = left + stepX * i
+                    val y = h - (v / maxV).toFloat().coerceIn(0f, 1f) * h
+                    if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+                }
+                drawPath(p, ref.color.copy(alpha = 0.85f), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 7f))))
+            }
             for (s in series) {
                 val path = Path()
                 val fill = Path()
@@ -134,9 +146,23 @@ fun LineChart(
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(xLabel, style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
-            if (series.size > 1) series.forEach { Legend(it.name, it.color) }
+            if (series.size > 1 || reference != null) series.forEach { Legend(it.name, it.color) }
+            reference?.let { Legend(it.name, it.color.copy(alpha = 0.85f)) }
         }
     }
+}
+
+/** Common "expected" lines for per-round charts. */
+object Expected {
+    /** One per round: lands in play, cumulative draws, mana available. */
+    fun perRound(name: String = "Expected: 1 per round") = Series(name, List(com.eddiew.commandersim.sim.MAX_TURNS) { (it + 1).toDouble() }, Hud.Warn)
+    fun constant(value: Double, name: String) = Series(name, List(com.eddiew.commandersim.sim.MAX_TURNS) { value }, Hud.Warn)
+}
+
+/** Running total of a per-round series. */
+fun cumulative(values: List<Double>): List<Double> {
+    var sum = 0.0
+    return values.map { sum += it; sum }
 }
 
 @Composable
@@ -199,11 +225,13 @@ fun BarList(
     color: Color = Hud.Electric,
     valueFormat: (Double) -> String = { num(it, 1) },
     maxValue: Double? = null,
+    /** Labels are card names ("Card" or "Card · Deck"): long-press shows the card. */
+    cardLabels: Boolean = false,
 ) {
     val maxV = maxValue ?: (items.maxOfOrNull { it.second } ?: 1.0).let { if (it <= 0) 1.0 else it }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         items.forEachIndexed { i, (label, v) ->
-            Column {
+            Column(if (cardLabels) Modifier.cardPress(cardNameOf(label)) else Modifier) {
                 Row(Modifier.fillMaxWidth()) {
                     Text(label, style = MaterialTheme.typography.bodySmall, color = Hud.Text, maxLines = 1,
                         overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

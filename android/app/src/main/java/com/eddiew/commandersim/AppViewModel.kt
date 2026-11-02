@@ -59,6 +59,8 @@ data class SimSettings(
     val engine: SimEngine = SimEngine.SAMPLE,
     /** Forge games are much slower, so they get their own (smaller) game count. */
     val forgeGamesPerDeck: Int = 12,
+    /** Forge games played at the same time, each in its own process. */
+    val forgeWorkers: Int = 2,
 ) {
     val effectiveGames: Int get() = if (engine == SimEngine.FORGE) forgeGamesPerDeck else gamesPerDeck
 }
@@ -89,7 +91,21 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     /** Official Commander precons, cached from MTGJSON. */
     val precons = preconRepo.catalog
     /** True when this build includes Forge's engine and card data. */
-    val forgeAvailable: Boolean = com.eddiew.commandersim.sim.forge.AndroidForge.isBundled(app)
+    val forgePacks = com.eddiew.commandersim.sim.forge.ForgePacks(app)
+    private val workerPool = com.eddiew.commandersim.sim.forge.AndroidForge.WorkerPool(app)
+    /** True when a Forge engine (built in or downloaded) is available. */
+    val forgeAvailable: Boolean = runCatching { app.assets.open("forge/bundled.txt").close(); true }.getOrDefault(false)
+
+    private val _packOffer = MutableStateFlow<com.eddiew.commandersim.sim.forge.RemotePack?>(null)
+    /** A newer Forge engine on GitHub, found at launch or by "Check now". */
+    val packOffer: StateFlow<com.eddiew.commandersim.sim.forge.RemotePack?> = _packOffer.asStateFlow()
+    private val _packProgress = MutableStateFlow<Float?>(null)
+    val packProgress: StateFlow<Float?> = _packProgress.asStateFlow()
+    /** True once the user has answered (or dismissed) this launch's Forge update prompt. */
+    private val _packPromptDismissed = MutableStateFlow(false)
+    val packPromptDismissed: StateFlow<Boolean> = _packPromptDismissed.asStateFlow()
+
+    private val cardInfoCache = com.eddiew.commandersim.data.CardInfoRepository(app.filesDir)
     private var control: com.eddiew.commandersim.sim.SimControl? = null
 
     val decks = decksRepo.decks
@@ -119,6 +135,10 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
 
     init {
         if (autoLoad) viewModelScope.launch { runCatching { checkForUpdate() } }
+        if (autoLoad) viewModelScope.launch(Dispatchers.IO) {
+            runCatching { forgePacks.refresh() }
+            runCatching { checkForgePack() }
+        }
         if (autoLoad) viewModelScope.launch {
             preconRepo.load()
             if (preconRepo.isStale) runCatching { preconRepo.sync() }
@@ -387,6 +407,49 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     suspend fun previewPrecon(p: com.eddiew.commandersim.data.Precon): ImportPreview =
         resolveImport(p.url).copy(name = p.name, sourceUrl = p.url)
 
+    // ───────────────────────────── Forge engine packs ─────────────────────────────
+
+    /** Looks for a newer Forge engine on GitHub. Returns it, or null when up to date. */
+    suspend fun checkForgePack(): com.eddiew.commandersim.sim.forge.RemotePack? =
+        forgePacks.checkRemote().also { _packOffer.value = it }
+
+    fun dismissPackPrompt() { _packPromptDismissed.value = true }
+
+    /** Downloads and switches to the offered pack. Returns a message for the user. */
+    suspend fun downloadForgePack(): String {
+        val offer = _packOffer.value ?: return "No new Forge engine to download."
+        _packPromptDismissed.value = true
+        _packProgress.value = 0f
+        return try {
+            val p = forgePacks.download(offer) { _packProgress.value = it }
+            _packOffer.value = null
+            workerPool.close() // workers reload with the new engine on the next run
+            "Now using ${p.manifest.label}."
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            "Forge download failed: ${e.message}"
+        } finally {
+            _packProgress.value = null
+        }
+    }
+
+    fun selectForgePack(id: String) {
+        forgePacks.select(id)
+        workerPool.close()
+    }
+
+    fun setForgeWorkers(n: Int) = updateSettings { it.copy(forgeWorkers = n.coerceIn(1, 4)) }
+
+    // ───────────────────────────── Card info ─────────────────────────────
+
+    suspend fun cardInfo(name: String): com.eddiew.commandersim.data.CardInfo = cardInfoCache.get(name)
+
+    override fun onCleared() {
+        workerPool.close()
+        super.onCleared()
+    }
+
     // ───────────────────────────── Simulation settings ─────────────────────────────
 
     fun togglePool(deckId: String) = updateSettings { s ->
@@ -418,7 +481,10 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         )
         val useForge = s.engine == SimEngine.FORGE && forgeAvailable
         val simulator: SimulationService =
-            if (useForge) com.eddiew.commandersim.sim.forge.AndroidForge.simulator(getApplication<Application>()) else SampleSimulator()
+            if (useForge) com.eddiew.commandersim.sim.forge.AndroidForge.simulator(
+                getApplication<Application>(), forgePacks, workerPool,
+                com.eddiew.commandersim.sim.forge.ForgeOptions(workers = s.forgeWorkers),
+            ) else SampleSimulator()
         val ctl = com.eddiew.commandersim.sim.SimControl().also { control = it }
         simJob?.cancel()
         simJob = viewModelScope.launch {

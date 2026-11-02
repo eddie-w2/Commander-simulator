@@ -56,17 +56,6 @@ data class SimMeta(
 @Serializable
 data class NamedValue(val name: String, val value: Double)
 
-@Serializable
-enum class EndCondition(val label: String) {
-    COMBAT_DAMAGE("Combat"),
-    COMMANDER_DAMAGE("Commander dmg"),
-    NONCOMBAT_DAMAGE("Burn / direct"),
-    LIFE_LOSS("Drain / life loss"),
-    POISON("Poison"),
-    MILL("Mill / decking"),
-    ALT_WIN("Alt win"),
-    TIMEOUT("Timeout"),
-}
 
 @Serializable
 data class ConditionCount(val condition: EndCondition, val count: Int)

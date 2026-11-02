@@ -22,6 +22,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.eddiew.commandersim.ui.components.CardInfoDialog
+import com.eddiew.commandersim.ui.components.LocalCardInfo
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -73,6 +84,11 @@ fun App(vm: AppViewModel = viewModel()) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
+    var cardPopup by remember { mutableStateOf<String?>(null) }
+    val packOffer by vm.packOffer.collectAsStateWithLifecycle()
+    val packDismissed by vm.packPromptDismissed.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    CompositionLocalProvider(LocalCardInfo provides { name -> cardPopup = name }) {
     Scaffold(
         containerColor = Hud.Bg,
         bottomBar = { if (tabs.any { it.route == route }) BottomBar(nav, route) },
@@ -150,6 +166,27 @@ fun App(vm: AppViewModel = viewModel()) {
                 }
             }
         }
+    }
+    }
+    cardPopup?.let { name -> CardInfoDialog(name, vm::cardInfo) { cardPopup = null } }
+    val offer = packOffer
+    if (offer != null && !packDismissed) {
+        AlertDialog(
+            onDismissRequest = { vm.dismissPackPrompt() },
+            containerColor = Hud.SurfaceHi,
+            title = { Text("New Forge engine available", color = Hud.Text) },
+            text = {
+                Text(
+                    "${offer.manifest.label} (${"%.0f".format(offer.manifest.size / 1e6)} MB). It brings Forge's latest " +
+                        "card support and rules fixes, and doesn't need an app update. Download it now?",
+                    color = Hud.Muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { scope.launch { vm.downloadForgePack() } }) { Text("DOWNLOAD", color = Hud.Cyan) }
+            },
+            dismissButton = { TextButton(onClick = { vm.dismissPackPrompt() }) { Text("NOT NOW", color = Hud.Muted) } },
+        )
     }
 }
 

@@ -42,6 +42,7 @@ import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.StackedBar
 import com.eddiew.commandersim.ui.components.TileRow
 import com.eddiew.commandersim.ui.components.pct
+import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
 import com.eddiew.commandersim.ui.theme.Mono
 
@@ -173,7 +174,7 @@ fun CollectionScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit) {
                     val list = if (showAllShared) shared else shared.take(25)
                     list.forEach { sc ->
                         val open = expanded == sc.name
-                        Column(Modifier.fillMaxWidth().clickable { expanded = if (open) null else sc.name }.padding(vertical = 5.dp)) {
+                        Column(Modifier.fillMaxWidth().cardPress(sc.name) { expanded = if (open) null else sc.name }.padding(vertical = 5.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("×${sc.count}", fontFamily = Mono, fontWeight = FontWeight.Bold, color = Hud.Cyan, modifier = Modifier.width(36.dp))
                                 Text(sc.name, style = MaterialTheme.typography.bodyMedium, color = Hud.Text, modifier = Modifier.weight(1f),

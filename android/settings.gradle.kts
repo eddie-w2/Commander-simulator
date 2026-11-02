@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "CommanderSim"
-include(":app")
+include(":app", ":engine-api", ":forgepack")
