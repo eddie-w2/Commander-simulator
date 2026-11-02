@@ -18,11 +18,13 @@ object DeckParser {
         val cards: List<DeckCard>,
         val ignored: List<String>,
         val warnings: List<String>,
+        /** True when the commander was inferred from the list's layout rather than marked. */
+        val commanderInferred: Boolean = false,
     ) {
         val total: Int get() = commanders.sumOf { it.quantity } + cards.sumOf { it.quantity }
     }
 
-    private enum class Section { MAIN, COMMANDER, SKIP }
+    private enum class Section { MAIN, COMMANDER, SIDEBOARD, SKIP }
 
     private val headerRegex = Regex(
         """^(?://\s*)?(commanders?|command zone|deck|main\s*deck|mainboard|main|sideboard|maybeboard|maybe|considering|companion|tokens?|about|name)\s*:?\s*(?:\(\d+\))?$""",
@@ -55,11 +57,23 @@ object DeckParser {
         var section = Section.MAIN
         val commanders = LinkedHashMap<String, DeckCard>()
         val cards = LinkedHashMap<String, DeckCard>()
+        val sideboard = mutableListOf<DeckCard>()
         val ignored = mutableListOf<String>()
+        // Main-deck cards split by blank lines, used to spot a commander listed on its own.
+        val groups = mutableListOf(mutableListOf<DeckCard>())
+
+        fun add(target: LinkedHashMap<String, DeckCard>, card: DeckCard) {
+            val key = card.name.lowercase()
+            val existing = target[key]
+            target[key] = existing?.copy(quantity = existing.quantity + card.quantity) ?: card
+        }
 
         for (raw in text.lines()) {
-            val line = raw.trim().trimStart('﻿')
-            if (line.isEmpty()) continue
+            val line = raw.trim().trimStart('\uFEFF')
+            if (line.isEmpty()) {
+                if (groups.last().isNotEmpty()) groups += mutableListOf<DeckCard>()
+                continue
+            }
 
             val header = headerRegex.matchEntire(line)
             if (header != null) {
@@ -67,8 +81,10 @@ object DeckParser {
                 section = when {
                     h.startsWith("command") -> Section.COMMANDER
                     h.startsWith("deck") || h.startsWith("main") -> Section.MAIN
+                    h.startsWith("sideboard") -> Section.SIDEBOARD
                     else -> Section.SKIP
                 }
+                if (groups.last().isNotEmpty()) groups += mutableListOf<DeckCard>()
                 continue
             }
             // Category headers such as "Creatures (30)" or "Sideboard (5):"
@@ -77,6 +93,7 @@ object DeckParser {
                 val c = category.groupValues[1].trim().lowercase()
                 section = when {
                     c.startsWith("command") -> Section.COMMANDER
+                    c == "sideboard" -> Section.SIDEBOARD
                     c in skipCategories -> Section.SKIP
                     else -> Section.MAIN
                 }
@@ -94,15 +111,74 @@ object DeckParser {
                 continue
             }
             val (card, flaggedCommander) = parsed
-            val target = if (section == Section.COMMANDER || flaggedCommander) commanders else cards
-            val key = card.name.lowercase()
-            val existing = target[key]
-            target[key] = existing?.copy(quantity = existing.quantity + card.quantity) ?: card
+            when {
+                section == Section.COMMANDER || flaggedCommander -> add(commanders, card)
+                section == Section.SIDEBOARD -> sideboard += card
+                else -> {
+                    add(cards, card)
+                    groups.last() += card
+                }
+            }
         }
 
-        val result = Result(commanders.values.toList(), cards.values.toList(), ignored, emptyList())
+        var inferred = false
+        if (commanders.isEmpty()) {
+            val mainTotal = cards.values.sumOf { it.quantity }
+            val nonEmpty = groups.filter { it.isNotEmpty() }
+            fun isCommanderGroup(g: List<DeckCard>) = g.sumOf { it.quantity } in 1..2 && g.all { it.quantity == 1 } &&
+                g.none { it.name.lowercase() in basicLands }
+            val candidate = when {
+                // MTGO-style exports put the commander in the sideboard.
+                sideboard.sumOf { it.quantity } in 1..2 && mainTotal + sideboard.sumOf { it.quantity } == 100 -> sideboard
+                nonEmpty.size >= 2 && mainTotal == 100 && isCommanderGroup(nonEmpty.first()) -> nonEmpty.first()
+                nonEmpty.size >= 2 && mainTotal == 100 && isCommanderGroup(nonEmpty.last()) -> nonEmpty.last()
+                else -> null
+            }
+            if (candidate != null) {
+                for (c in candidate) {
+                    cards.remove(c.name.lowercase())
+                    add(commanders, c)
+                }
+                inferred = true
+            }
+        }
+        if (!inferred) sideboard.forEach { ignored += "${it.quantity} ${it.name}" }
+
+        val result = Result(commanders.values.toList(), cards.values.toList(), ignored, emptyList(), inferred)
         return result.copy(warnings = validate(result))
     }
+
+    /**
+     * Picks the commander(s) using card data: a legendary creature (or a card that says it can be your commander)
+     * whose colour identity covers every other card. Two partners are allowed for 98+2 lists.
+     * Returns null when the answer isn't clear.
+     */
+    fun detectCommander(cards: List<DeckCard>, info: Map<String, CardFacts>): List<DeckCard>? {
+        val facts = cards.associateWith { info[it.name.lowercase()] ?: info[it.name.substringBefore(" // ").lowercase()] }
+        if (facts.values.count { it != null } < cards.size * 0.8) return null
+        val eligible = cards.filter { facts[it]?.canBeCommander == true && it.quantity == 1 }
+        if (eligible.isEmpty()) return null
+        fun covers(identity: String, others: List<DeckCard>) =
+            others.all { o -> (facts[o]?.colorIdentity ?: "").all { it in identity } }
+
+        val singles = eligible.filter { e -> covers(facts[e]!!.colorIdentity, cards - e) }
+        // Partner pairs: both have a partner-style ability and together cover the rest of the deck.
+        val partners = eligible.filter { facts[it]!!.partner }
+        val pairs = mutableListOf<List<DeckCard>>()
+        for (i in partners.indices) for (j in i + 1 until partners.size) {
+            val pair = listOf(partners[i], partners[j])
+            val identity = facts[partners[i]]!!.colorIdentity + facts[partners[j]]!!.colorIdentity
+            if (covers(identity, cards - pair.toSet())) pairs += pair
+        }
+        return when {
+            singles.size == 1 && pairs.isEmpty() -> singles
+            singles.isEmpty() && pairs.size == 1 -> pairs[0]
+            else -> null // ambiguous: let the user pick
+        }
+    }
+
+    /** Card facts needed for commander detection. */
+    data class CardFacts(val colorIdentity: String, val canBeCommander: Boolean, val partner: Boolean)
 
     /** Returns the card and whether the line itself marks it as a commander. */
     internal fun parseCardLine(line: String): Pair<DeckCard, Boolean>? {

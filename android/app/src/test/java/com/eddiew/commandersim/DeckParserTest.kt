@@ -89,4 +89,76 @@ class DeckParserTest {
         assertTrue(r.warnings.any { it.startsWith("No commander") })
         assertNull(r.commanders.firstOrNull())
     }
+
+    private fun hundred(commanderFirst: Boolean): String {
+        val body = (1..98).joinToString("\n") { "1 Card $it" } + "\n1 Sol Ring"
+        return if (commanderFirst) "1 Lathril, Blade of the Elves\n\n$body" else "$body\n\n1 Lathril, Blade of the Elves"
+    }
+
+    @Test
+    fun `commander listed separately first is inferred (99+1)`() {
+        val r = DeckParser.parse(hundred(commanderFirst = true))
+        assertEquals("Lathril, Blade of the Elves", r.commanders.single().name)
+        assertTrue(r.commanderInferred)
+        assertEquals(99, r.cards.sumOf { it.quantity })
+    }
+
+    @Test
+    fun `commander listed separately last is inferred`() {
+        val r = DeckParser.parse(hundred(commanderFirst = false))
+        assertEquals("Lathril, Blade of the Elves", r.commanders.single().name)
+    }
+
+    @Test
+    fun `two partners separated are inferred (98+2)`() {
+        val body = (1..98).joinToString("\n") { "1 Card $it" }
+        val r = DeckParser.parse("1 Thrasios, Triton Hero\n1 Tymna the Weaver\n\n$body")
+        assertEquals(listOf("Thrasios, Triton Hero", "Tymna the Weaver"), r.commanders.map { it.name })
+    }
+
+    @Test
+    fun `mtgo style sideboard commander`() {
+        val body = (1..99).joinToString("\n") { "1 Card $it" }
+        val r = DeckParser.parse("$body\n\nSIDEBOARD:\n1 Krenko, Mob Boss")
+        assertEquals("Krenko, Mob Boss", r.commanders.single().name)
+    }
+
+    @Test
+    fun `no blank-line structure leaves commander for detection`() {
+        val r = DeckParser.parse((1..100).joinToString("\n") { "1 Card $it" })
+        assertTrue(r.commanders.isEmpty())
+    }
+
+    @Test
+    fun `detects commander by legendary and colour identity`() {
+        val cards = listOf(
+            com.eddiew.commandersim.data.model.DeckCard("Lathril, Blade of the Elves"),
+            com.eddiew.commandersim.data.model.DeckCard("Elvish Mystic"),
+            com.eddiew.commandersim.data.model.DeckCard("Rhys the Exiled"),
+            com.eddiew.commandersim.data.model.DeckCard("Village Rites"),
+        )
+        val facts = mapOf(
+            "lathril, blade of the elves" to DeckParser.CardFacts("BG", canBeCommander = true, partner = false),
+            "elvish mystic" to DeckParser.CardFacts("G", canBeCommander = false, partner = false),
+            "rhys the exiled" to DeckParser.CardFacts("G", canBeCommander = true, partner = false),
+            "village rites" to DeckParser.CardFacts("B", canBeCommander = false, partner = false),
+        )
+        // Rhys is legendary but can't cover the black card, so Lathril is the only fit.
+        assertEquals(listOf("Lathril, Blade of the Elves"), DeckParser.detectCommander(cards, facts)?.map { it.name })
+    }
+
+    @Test
+    fun `detects partner pair`() {
+        val cards = listOf("Thrasios, Triton Hero", "Tymna the Weaver", "Counterspell", "Swords to Plowshares", "Llanowar Elves", "Dark Ritual")
+            .map { com.eddiew.commandersim.data.model.DeckCard(it) }
+        val facts = mapOf(
+            "thrasios, triton hero" to DeckParser.CardFacts("GU", true, true),
+            "tymna the weaver" to DeckParser.CardFacts("WB", true, true),
+            "counterspell" to DeckParser.CardFacts("U", false, false),
+            "swords to plowshares" to DeckParser.CardFacts("W", false, false),
+            "llanowar elves" to DeckParser.CardFacts("G", false, false),
+            "dark ritual" to DeckParser.CardFacts("B", false, false),
+        )
+        assertEquals(setOf("Thrasios, Triton Hero", "Tymna the Weaver"), DeckParser.detectCommander(cards, facts)?.map { it.name }?.toSet())
+    }
 }

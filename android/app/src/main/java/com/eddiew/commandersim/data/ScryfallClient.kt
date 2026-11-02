@@ -24,7 +24,16 @@ import java.net.URL
  */
 class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true }) {
 
-    data class CardInfo(val name: String, val typeLine: String?, val manaValue: Double?, val colorIdentity: String)
+    data class CardInfo(
+        val name: String,
+        val typeLine: String?,
+        val manaValue: Double?,
+        val colorIdentity: String,
+        val canBeCommander: Boolean = false,
+        val partner: Boolean = false,
+    ) {
+        fun facts() = DeckParser.CardFacts(colorIdentity, canBeCommander, partner)
+    }
 
     suspend fun lookup(names: List<String>): Map<String, CardInfo> = withContext(Dispatchers.IO) {
         val found = HashMap<String, CardInfo>()
@@ -54,7 +63,15 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
             ?: obj["card_faces"]?.jsonArray?.firstOrNull()?.jsonObject?.get("type_line")?.jsonPrimitive?.contentOrNull
         val cmc = obj["cmc"]?.jsonPrimitive?.doubleOrNull
         val identity = obj["color_identity"]?.jsonArray?.joinToString("") { it.jsonPrimitive.content } ?: ""
-        return CardInfo(name, typeLine, cmc, identity)
+        val faces = obj["card_faces"]?.jsonArray?.map { it.jsonObject } ?: emptyList()
+        val oracle = (listOfNotNull(obj["oracle_text"]?.jsonPrimitive?.contentOrNull) +
+            faces.mapNotNull { it["oracle_text"]?.jsonPrimitive?.contentOrNull }).joinToString("\n")
+        val keywords = obj["keywords"]?.jsonArray?.map { it.jsonPrimitive.content.lowercase() } ?: emptyList()
+        val front = typeLine?.substringBefore("//") ?: ""
+        val canLead = ("Legendary" in front && "Creature" in front) || oracle.contains("can be your commander", ignoreCase = true)
+        val partner = keywords.any { it.startsWith("partner") || it == "friends forever" || it == "doctor's companion" } ||
+            oracle.contains("Choose a Background", ignoreCase = true) || "Background" in front
+        return CardInfo(name, typeLine, cmc, identity, canLead || "Background" in front, partner)
     }
 
     private fun post(url: String, body: String): String {

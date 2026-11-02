@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eddiew.commandersim.AppViewModel
 import com.eddiew.commandersim.data.model.Deck
-import com.eddiew.commandersim.data.model.DeckRole
 import com.eddiew.commandersim.ui.components.ColorPips
 import com.eddiew.commandersim.ui.components.HudButton
 import com.eddiew.commandersim.ui.components.HudChip
@@ -36,28 +34,22 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
     val decks by vm.decks.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
+    val names = decks.associate { it.id to it.name }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader(
-            "Deck Bay",
-            "${decks.size} decks loaded · ${settings.roles.count { it.value == DeckRole.CANDIDATE }} candidates · " +
-                "${settings.roles.count { it.value == DeckRole.OPPONENT }} opponents",
-        )
+        ScreenHeader("Deck Bay", "${decks.size} decks · ${settings.pool.count { id -> decks.any { it.id == id } }} in the simulation pool")
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item {
-                HudButton("+ Import deck", onImport, Modifier.fillMaxWidth())
-            }
+            item { HudButton("+ Import deck", onImport, Modifier.fillMaxWidth()) }
             if (decks.isEmpty()) {
                 item {
                     HudPanel(title = "No decks yet") {
                         Text(
-                            "Paste a deck list from Moxfield, Archidekt or any text export. " +
-                                "Mark the decks you're choosing between as CANDIDATES and your playgroup's decks as OPPONENTS, " +
-                                "then run a simulation.",
+                            "Paste a Moxfield or Archidekt link, or a deck list in any text format. " +
+                                "Every deck in the pool plays every other deck in simulated 4-player games.",
                             style = MaterialTheme.typography.bodyMedium, color = Hud.Muted,
                         )
                     }
@@ -66,9 +58,10 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
             items(decks, key = { it.id }) { deck ->
                 DeckRow(
                     deck = deck,
-                    role = settings.roles[deck.id],
+                    inPool = deck.id in settings.pool,
+                    parentName = deck.parentId?.let { names[it] },
                     syncing = deck.id in syncing,
-                    onRole = { vm.setRole(deck.id, it) },
+                    onToggle = { vm.togglePool(deck.id) },
                     onClick = { onOpen(deck.id) },
                 )
             }
@@ -77,42 +70,36 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
 }
 
 @Composable
-private fun DeckRow(deck: Deck, role: DeckRole?, syncing: Boolean, onRole: (DeckRole?) -> Unit, onClick: () -> Unit) {
-    val accent = when (role) {
-        DeckRole.CANDIDATE -> Hud.Cyan
-        DeckRole.OPPONENT -> Hud.Electric
-        null -> Hud.Outline
-    }
-    HudPanel(accent = accent, onClick = onClick) {
+private fun DeckRow(deck: Deck, inPool: Boolean, parentName: String?, syncing: Boolean, onToggle: () -> Unit, onClick: () -> Unit) {
+    HudPanel(accent = if (inPool) Hud.Cyan else Hud.Outline, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(deck.name, style = MaterialTheme.typography.titleMedium, color = Hud.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(deck.commanderLabel, style = MaterialTheme.typography.bodySmall, color = Hud.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!deck.name.equals(deck.commanderLabel, ignoreCase = true)) {
+                    Text(deck.commanderLabel, style = MaterialTheme.typography.bodySmall, color = Hud.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (parentName != null) {
+                    Text("VARIANT OF ${parentName.uppercase()}", style = MaterialTheme.typography.labelSmall, color = Hud.Electric,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
                 ColorPips(deck.colorIdentity)
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "${deck.cardCount} CARDS",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (deck.cardCount == 100) Hud.Muted else Hud.Warn,
-                )
+                Text("${deck.cardCount} CARDS", style = MaterialTheme.typography.labelSmall,
+                    color = if (deck.cardCount == 100) Hud.Muted else Hud.Warn)
                 Text(
                     when {
                         syncing -> "SYNCING…"
-                        deck.enriched -> "SCRYFALL ✓"
+                        deck.enriched -> "CARD DATA ✓"
                         else -> "OFFLINE"
                     },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (deck.enriched) Hud.Positive else Hud.Dim,
+                    style = MaterialTheme.typography.labelSmall, color = if (deck.enriched) Hud.Positive else Hud.Dim,
                 )
             }
         }
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudChip("Candidate", role == DeckRole.CANDIDATE, { onRole(if (role == DeckRole.CANDIDATE) null else DeckRole.CANDIDATE) }, color = Hud.Cyan)
-            HudChip("Opponent", role == DeckRole.OPPONENT, { onRole(if (role == DeckRole.OPPONENT) null else DeckRole.OPPONENT) })
-        }
+        HudChip(if (inPool) "✓ In pool" else "+ Add to pool", inPool, onToggle, color = Hud.Cyan)
     }
 }

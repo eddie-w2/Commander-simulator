@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eddiew.commandersim.AppViewModel
 import com.eddiew.commandersim.data.model.CardType
+import com.eddiew.commandersim.data.model.diffDecks
+import com.eddiew.commandersim.ui.components.HudButton
 import com.eddiew.commandersim.ui.components.ColorPips
 import com.eddiew.commandersim.ui.components.ColumnChart
 import com.eddiew.commandersim.ui.components.DonutChart
@@ -39,7 +41,7 @@ import com.eddiew.commandersim.ui.components.num
 import com.eddiew.commandersim.ui.theme.Hud
 
 @Composable
-fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit) {
+fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVariant: (String) -> Unit, onRunAb: () -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
     val deck = decks.firstOrNull { it.id == deckId }
@@ -60,7 +62,8 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit) {
     val avgMv = nonLand.sumOf { it.manaValue!! * it.quantity } / nonLand.sumOf { it.quantity }.coerceAtLeast(1)
 
     Column(Modifier.fillMaxSize()) {
-    ScreenHeader(deck.name, deck.commanderLabel, trailing = { ColorPips(deck.colorIdentity) })
+    val parent = deck.parentId?.let { pid -> decks.firstOrNull { it.id == pid } }
+    ScreenHeader(deck.name, deck.commanderLabel.takeIf { !it.equals(deck.name, ignoreCase = true) }, trailing = { ColorPips(deck.colorIdentity) })
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
@@ -71,6 +74,38 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit) {
                 HudOutlineButton("← Back", onBack, color = Hud.Muted)
                 HudOutlineButton(if (deck.id in syncing) "Syncing…" else "Re-sync Scryfall", { vm.resync(deck.id) })
                 HudOutlineButton("Delete", { confirmDelete = true }, color = Hud.Negative)
+            }
+        }
+        item {
+            HudPanel(title = "A/B test card swaps", accent = Hud.Cyan) {
+                Text(
+                    "Make a copy of this deck with some cards swapped, then simulate both versions on identical games " +
+                        "to see what the swap changes.",
+                    style = MaterialTheme.typography.bodySmall, color = Hud.Muted,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HudButton("Create variant", { onVariant(deck.id) }, Modifier.weight(1f))
+                    if (parent != null) {
+                        HudOutlineButton("Test vs original", { vm.startAb(parent.id, deck.id); onRunAb() })
+                    }
+                }
+            }
+        }
+        if (parent != null) {
+            item {
+                val diff = diffDecks(parent, deck)
+                HudPanel(title = "Changes vs ${parent.name}") {
+                    if (diff.removed.isEmpty() && diff.added.isEmpty()) {
+                        Text("No differences yet.", style = MaterialTheme.typography.bodySmall, color = Hud.Dim)
+                    }
+                    diff.removed.forEach {
+                        Text("− ${if (it.quantity > 1) "${it.quantity} " else ""}${it.name}", style = MaterialTheme.typography.bodyMedium, color = Hud.Negative)
+                    }
+                    diff.added.forEach {
+                        Text("+ ${if (it.quantity > 1) "${it.quantity} " else ""}${it.name}", style = MaterialTheme.typography.bodyMedium, color = Hud.Positive)
+                    }
+                }
             }
         }
         if (!deck.enriched) {

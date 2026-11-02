@@ -57,6 +57,10 @@ data class Deck(
     val cards: List<DeckCard>,
     val createdAt: Long,
     val enriched: Boolean = false,
+    /** Set when this deck is a variant of another deck (for A/B testing card swaps). */
+    val parentId: String? = null,
+    /** Where it was imported from, if a link was used. */
+    val sourceUrl: String? = null,
 ) {
     val cardCount: Int get() = commanders.sumOf { it.quantity } + cards.sumOf { it.quantity }
     val commanderLabel: String get() = commanders.joinToString(" + ") { it.name }.ifEmpty { "No commander" }
@@ -67,6 +71,21 @@ data class Deck(
         }
 }
 
-/** A deck's role in a simulation. */
-@Serializable
-enum class DeckRole { CANDIDATE, OPPONENT }
+/** Cards removed and added going from [base] to [variant], by name (quantities included). */
+data class DeckDiff(val removed: List<DeckCard>, val added: List<DeckCard>)
+
+fun diffDecks(base: Deck, variant: Deck): DeckDiff {
+    fun counts(d: Deck) = (d.commanders + d.cards).groupBy { it.name.lowercase() }
+        .mapValues { (_, v) -> v.first() to v.sumOf { it.quantity } }
+    val a = counts(base)
+    val b = counts(variant)
+    val removed = a.mapNotNull { (k, v) ->
+        val left = v.second - (b[k]?.second ?: 0)
+        if (left > 0) v.first.copy(quantity = left) else null
+    }
+    val added = b.mapNotNull { (k, v) ->
+        val extra = v.second - (a[k]?.second ?: 0)
+        if (extra > 0) v.first.copy(quantity = extra) else null
+    }
+    return DeckDiff(removed.sortedBy { it.name }, added.sortedBy { it.name })
+}

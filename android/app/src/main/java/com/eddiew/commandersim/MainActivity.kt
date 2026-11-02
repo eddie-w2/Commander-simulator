@@ -1,5 +1,6 @@
 package com.eddiew.commandersim
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -33,6 +34,8 @@ import com.eddiew.commandersim.ui.components.gridBackground
 import com.eddiew.commandersim.ui.decks.DeckDetailScreen
 import com.eddiew.commandersim.ui.decks.DecksScreen
 import com.eddiew.commandersim.ui.decks.ImportDeckScreen
+import com.eddiew.commandersim.ui.decks.VariantEditorScreen
+import com.eddiew.commandersim.ui.results.CardDetailScreen
 import com.eddiew.commandersim.ui.results.DeckReportScreen
 import com.eddiew.commandersim.ui.results.ResultsScreen
 import com.eddiew.commandersim.ui.simulate.SimulateScreen
@@ -75,7 +78,19 @@ fun App(vm: AppViewModel = viewModel()) {
                     ImportDeckScreen(vm, onDone = { nav.popBackStack() })
                 }
                 composable("deck/{id}") { back ->
-                    DeckDetailScreen(vm, back.arguments?.getString("id") ?: "", onBack = { nav.popBackStack() })
+                    DeckDetailScreen(
+                        vm, back.arguments?.getString("id") ?: "",
+                        onBack = { nav.popBackStack() },
+                        onVariant = { nav.navigate("variant/$it") },
+                        onRunAb = { switchTab(nav, "simulate") },
+                    )
+                }
+                composable("variant/{id}") { back ->
+                    VariantEditorScreen(
+                        vm, back.arguments?.getString("id") ?: "",
+                        onCancel = { nav.popBackStack() },
+                        onSaved = { switchTab(nav, "simulate") },
+                    )
                 }
                 composable("simulate") {
                     SimulateScreen(vm, onFinished = { switchTab(nav, "results") })
@@ -84,7 +99,20 @@ fun App(vm: AppViewModel = viewModel()) {
                     ResultsScreen(vm, onOpenDeck = { nav.navigate("report/$it") }, onSimulate = { switchTab(nav, "simulate") })
                 }
                 composable("report/{deckId}") { back ->
-                    DeckReportScreen(vm, back.arguments?.getString("deckId") ?: "", onBack = { nav.popBackStack() })
+                    val deckId = back.arguments?.getString("deckId") ?: ""
+                    DeckReportScreen(
+                        vm, deckId,
+                        onBack = { nav.popBackStack() },
+                        onCard = { name -> nav.navigate("card/$deckId/${Uri.encode(name)}") },
+                    )
+                }
+                composable("card/{deckId}/{name}") { back ->
+                    CardDetailScreen(
+                        vm,
+                        back.arguments?.getString("deckId") ?: "",
+                        Uri.decode(back.arguments?.getString("name") ?: ""),
+                        onBack = { nav.popBackStack() },
+                    )
                 }
             }
         }

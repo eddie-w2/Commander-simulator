@@ -346,8 +346,8 @@ fun Heatmap(
         Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             Spacer(Modifier.width(92.dp))
             colLabels.forEach {
-                Text(it.take(8).uppercase(), style = MaterialTheme.typography.labelSmall, color = Hud.Muted,
-                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Clip)
+                Text(it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, lineHeight = 12.sp), color = Hud.Muted,
+                    modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         rowLabels.forEachIndexed { r, label ->
