@@ -62,4 +62,33 @@ class DeckLinkImporterTest {
         assertEquals("Legendary Creature — Human Shaman", d.commanders.single().typeLine)
         assertEquals(listOf("Cultivate"), d.cards.map { it.name })
     }
+
+    @Test
+    fun `recognises moxfield profiles`() {
+        assertEquals("Eddiew2", DeckLinkImporter.moxfieldProfileUser("https://moxfield.com/users/Eddiew2"))
+        assertEquals("some.user_1", DeckLinkImporter.moxfieldProfileUser("https://www.moxfield.com/users/some.user_1/decks"))
+        assertEquals("Eddiew2", DeckLinkImporter.moxfieldProfileUser("@Eddiew2"))
+        assertEquals(null, DeckLinkImporter.moxfieldProfileUser("https://moxfield.com/decks/AbC123"))
+        assertFalse(DeckLinkImporter.isDeckLink("https://moxfield.com/users/Eddiew2"))
+    }
+
+    @Test
+    fun `moxfield profile decks keep only the user's`() {
+        val decks = importer.parseMoxfieldProfile(obj("""
+            {"pageNumber":1,"pageSize":100,"totalResults":3,"totalPages":1,"data":[
+              {"publicId":"abc","name":"Elves","format":"commander","publicUrl":"https://www.moxfield.com/decks/abc",
+               "createdByUser":{"userName":"eddiew2"},"mainboardCount":99,"colors":["G","B"],"lastUpdatedAtUtc":"2026-10-01T12:00:00Z"},
+              {"publicId":"def","name":"Burn","format":"modern","createdByUser":{"userName":"Eddiew2"},"mainboardCount":60,"colors":["R"]},
+              {"publicId":"zzz","name":"Someone else","format":"commander","createdByUser":{"userName":"other"}}
+            ]}
+        """), "Eddiew2")
+        assertEquals(listOf("abc", "def"), decks.map { it.id })
+        val elves = decks.first()
+        assertEquals("BG", elves.colors)
+        assertTrue(elves.isCommander)
+        assertEquals(99, elves.mainboardCount)
+        assertEquals("2026-10-01", elves.updated)
+        assertEquals("https://moxfield.com/decks/def", decks[1].url)
+        assertFalse(decks[1].isCommander)
+    }
 }

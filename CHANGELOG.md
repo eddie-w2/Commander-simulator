@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.02
+- **Moxfield profile import:** Decks → Moxfield profile (or paste a profile link into Import). Enter `moxfield.com/users/<name>` or a username to list that user's public decks with checkboxes.
+  - Select all/none, plus a "Commander only" filter.
+  - Decks you've already imported are marked and start unchecked.
+  - Optionally mark the imported decks as owned.
+  - Imports the checked decks one after another with a progress bar, and lists any that failed.
+  - The app remembers the last profile.
+- Card data downloads now run one deck at a time, so bulk imports don't overload Scryfall.
+
 ## v0.3.01
 - **Quick model replaces the quick sample.** It now plays your real cards:
   - Real mana costs and coloured pips, paid from the sources in play. Each land, rock and dork makes its real colours. Tapped lands enter tapped, fetches find your colours, and land ramp puts lands into play.

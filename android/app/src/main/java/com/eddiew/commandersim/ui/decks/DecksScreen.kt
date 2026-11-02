@@ -34,7 +34,7 @@ import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.theme.Hud
 
 @Composable
-fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit, onPrecons: () -> Unit) {
+fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit, onPrecons: () -> Unit, onMoxfield: () -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
@@ -58,9 +58,12 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HudButton("+ Import deck", onImport, Modifier.weight(1f))
-                    HudOutlineButton("Precons", onPrecons, color = Hud.Cyan)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HudButton("+ Import deck", onImport, Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HudOutlineButton("Precons", onPrecons, Modifier.weight(1f), color = Hud.Cyan)
+                        HudOutlineButton("Moxfield profile", onMoxfield, Modifier.weight(1f), color = Hud.Cyan)
+                    }
                 }
             }
             if (decks.isNotEmpty()) {

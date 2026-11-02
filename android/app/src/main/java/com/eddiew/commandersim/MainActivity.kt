@@ -40,12 +40,14 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.eddiew.commandersim.ui.components.gridBackground
 import com.eddiew.commandersim.ui.decks.DeckDetailScreen
 import com.eddiew.commandersim.ui.decks.DecksScreen
 import com.eddiew.commandersim.ui.decks.ImportDeckScreen
+import com.eddiew.commandersim.ui.decks.MoxfieldProfileScreen
 import com.eddiew.commandersim.ui.decks.PreconsScreen
 import com.eddiew.commandersim.ui.decks.VariantEditorScreen
 import com.eddiew.commandersim.ui.results.CardDetailScreen
@@ -96,10 +98,16 @@ fun App(vm: AppViewModel = viewModel()) {
         Box(Modifier.fillMaxSize().gridBackground().padding(padding)) {
             NavHost(nav, startDestination = "decks") {
                 composable("decks") {
-                    DecksScreen(vm, onImport = { nav.navigate("import") }, onOpen = { nav.navigate("deck/$it") }, onSettings = { nav.navigate("settings") }, onPrecons = { nav.navigate("precons") })
+                    DecksScreen(vm, onImport = { nav.navigate("import") }, onOpen = { nav.navigate("deck/$it") }, onSettings = { nav.navigate("settings") }, onPrecons = { nav.navigate("precons") },
+                        onMoxfield = { nav.navigate("moxfield") })
                 }
                 composable("import") {
-                    ImportDeckScreen(vm, onDone = { nav.popBackStack() })
+                    ImportDeckScreen(vm, onDone = { nav.popBackStack() }, onProfile = { link ->
+                        nav.navigate("moxfield?u=${Uri.encode(link)}") { popUpTo("import") { inclusive = true } }
+                    })
+                }
+                composable("moxfield?u={u}", arguments = listOf(navArgument("u") { nullable = true; defaultValue = null })) { back ->
+                    MoxfieldProfileScreen(vm, back.arguments?.getString("u"), onBack = { nav.popBackStack() }, onDone = { nav.popBackStack() })
                 }
                 composable("deck/{id}") { back ->
                     DeckDetailScreen(

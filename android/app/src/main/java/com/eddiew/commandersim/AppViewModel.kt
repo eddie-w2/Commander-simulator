@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.io.File
@@ -61,6 +63,8 @@ data class SimSettings(
     val forgeGamesPerDeck: Int = 12,
     /** Forge games played at the same time, each in its own process. */
     val forgeWorkers: Int = 2,
+    /** Last Moxfield profile used for bulk import. */
+    val moxfieldUser: String? = null,
 ) {
     val effectiveGames: Int get() = if (engine == SimEngine.FORGE) forgeGamesPerDeck else gamesPerDeck
 }
@@ -281,8 +285,19 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         decks.value.firstOrNull { it.id == deckId }?.let { d -> viewModelScope.launch { enrich(d) } }
     }
 
+    /** One card data download at a time, so bulk imports don't flood Scryfall. */
+    private val enrichLock = Mutex()
+
     private suspend fun enrich(deck: Deck) {
         _syncing.update { it + deck.id }
+        try {
+            enrichLock.withLock { enrichNow(deck) }
+        } finally {
+            _syncing.update { it - deck.id }
+        }
+    }
+
+    private suspend fun enrichNow(deck: Deck) {
         try {
             val names = (deck.commanders + deck.cards).map { it.name }
             val info = scryfall.lookup(names)
@@ -293,7 +308,8 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
                 val t = tags[e.name.lowercase()] ?: tags[c.name.lowercase()]
                 e.copy(tags = t?.sorted() ?: e.tags ?: emptyList())
             }
-            val latest = decks.value.firstOrNull { it.id == deck.id } ?: deck
+            // Deleted while waiting its turn: don't bring it back.
+            val latest = decks.value.firstOrNull { it.id == deck.id } ?: return
             decksRepo.upsert(
                 latest.copy(commanders = fix(latest.commanders), cards = fix(latest.cards), enriched = true, dataLevel = com.eddiew.commandersim.data.model.CARD_DATA_LEVEL),
             )
@@ -301,8 +317,6 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
             throw e
         } catch (_: Exception) {
             // Offline or Scryfall unavailable: the deck still works, cards just show as "Unknown" type.
-        } finally {
-            _syncing.update { it - deck.id }
         }
     }
 
@@ -419,6 +433,44 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     /** Downloads one precon and reads it like an import (commander detected if MTGJSON doesn't say). */
     suspend fun previewPrecon(p: com.eddiew.commandersim.data.Precon): ImportPreview =
         resolveImport(p.url).copy(name = p.name, sourceUrl = p.url)
+
+    // ───────────────────────────── Moxfield profile ─────────────────────────────
+
+    /** Public decks on a Moxfield profile (link or username). */
+    suspend fun moxfieldProfile(linkOrUser: String): Pair<String, List<DeckLinkImporter.ProfileDeck>> {
+        val user = DeckLinkImporter.moxfieldProfileUser(linkOrUser)
+            ?: linkOrUser.trim().removePrefix("@").takeIf { it.matches(Regex("[A-Za-z0-9_.-]{2,}")) }
+            ?: throw DeckLinkImporter.ImportException("Enter a Moxfield profile link (moxfield.com/users/…) or a username.")
+        updateSettings { it.copy(moxfieldUser = user) }
+        return user to linkImporter.moxfieldProfile(user)
+    }
+
+    /**
+     * Imports [picked] one after another (Moxfield doesn't like bursts). [progress] gets (done, total, current name).
+     * Returns one line per deck that failed.
+     */
+    suspend fun importProfileDecks(
+        picked: List<DeckLinkImporter.ProfileDeck>,
+        owned: Boolean,
+        progress: (Int, Int, String) -> Unit,
+    ): List<String> {
+        val failures = mutableListOf<String>()
+        picked.forEachIndexed { i, d ->
+            progress(i, picked.size, d.name)
+            try {
+                val preview = resolveImport(d.url)
+                if (preview.cards.isEmpty()) error("empty deck")
+                saveDeck(d.name, preview, emptyList(), owned)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failures += "${d.name}: ${e.message ?: "couldn't import"}"
+            }
+            if (i < picked.lastIndex) kotlinx.coroutines.delay(700)
+        }
+        progress(picked.size, picked.size, "")
+        return failures
+    }
 
     // ───────────────────────────── Forge engine packs ─────────────────────────────
 

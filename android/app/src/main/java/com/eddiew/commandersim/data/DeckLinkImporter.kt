@@ -26,6 +26,21 @@ class DeckLinkImporter(private val json: Json = Json { ignoreUnknownKeys = true 
 
     class ImportException(message: String) : Exception(message)
 
+    /** One public deck on a Moxfield profile. */
+    data class ProfileDeck(
+        val id: String,
+        val name: String,
+        val format: String,
+        /** Colour letters, WUBRG order. */
+        val colors: String,
+        val mainboardCount: Int,
+        /** ISO date of the last update, if Moxfield gave one. */
+        val updated: String?,
+        val url: String,
+    ) {
+        val isCommander: Boolean get() = format.equals("commander", ignoreCase = true) || format.equals("edh", ignoreCase = true)
+    }
+
     companion object {
         private val moxfield = Regex("""moxfield\.com/decks/([A-Za-z0-9_-]+)""")
         private val archidekt = Regex("""archidekt\.com/(?:decks|api/decks)/(\d+)""")
@@ -37,6 +52,16 @@ class DeckLinkImporter(private val json: Json = Json { ignoreUnknownKeys = true 
         fun isDeckLink(text: String): Boolean {
             val t = text.trim()
             return !t.contains('\n') && (moxfield.containsMatchIn(t) || archidekt.containsMatchIn(t) || mtgjson.containsMatchIn(t))
+        }
+
+        private val moxfieldUser = Regex("""moxfield\.com/users/([A-Za-z0-9_.-]+)""")
+
+        /** The username in a Moxfield profile link ("moxfield.com/users/Name"), a bare "@Name", or null. */
+        fun moxfieldProfileUser(text: String): String? {
+            val t = text.trim()
+            if (t.contains('\n')) return null
+            moxfieldUser.find(t)?.let { return it.groupValues[1] }
+            return Regex("""^@([A-Za-z0-9_.-]{2,})$""").find(t)?.groupValues?.get(1)
         }
 
         private val colourNames = mapOf("white" to 'W', "blue" to 'U', "black" to 'B', "red" to 'R', "green" to 'G')
@@ -97,6 +122,67 @@ class DeckLinkImporter(private val json: Json = Json { ignoreUnknownKeys = true 
             }
         }
         return Imported(name, board("commanders"), board("mainboard"), url)
+    }
+
+    /**
+     * Lists the public decks of a Moxfield user, newest first. Tries Moxfield's deck search filtered by author,
+     * then the older per-user endpoint. Private and unlisted decks are never included.
+     */
+    suspend fun moxfieldProfile(user: String): List<ProfileDeck> = withContext(Dispatchers.IO) {
+        val u = java.net.URLEncoder.encode(user, "UTF-8")
+        val endpoints = listOf<(Int) -> String>(
+            { p -> "https://api2.moxfield.com/v2/decks/search?pageNumber=$p&pageSize=100&sortType=updated&sortDirection=Descending&authorUserNames=$u" },
+            { p -> "https://api2.moxfield.com/v2/users/$u/decks?pageNumber=$p&pageSize=100" },
+        )
+        var lastError: String? = null
+        for (endpoint in endpoints) {
+            val decks = ArrayList<ProfileDeck>()
+            var page = 1
+            var pages = 1
+            try {
+                while (page <= pages && page <= 10) {
+                    val root = json.parseToJsonElement(get(endpoint(page))).jsonObject
+                    decks += parseMoxfieldProfile(root, user)
+                    // Nothing by this user on the first page: the endpoint ignored the author filter.
+                    if (decks.isEmpty()) break
+                    pages = root["totalPages"]?.jsonPrimitive?.intOrNull ?: 1
+                    page++
+                    if (page <= pages) Thread.sleep(300)
+                }
+            } catch (e: Exception) {
+                lastError = e.message
+                if (decks.isEmpty()) continue
+            }
+            if (decks.isNotEmpty()) return@withContext decks.distinctBy { it.id }
+        }
+        if (lastError != null) throw ImportException("Moxfield didn't return the profile ($lastError). Check the username.")
+        emptyList()
+    }
+
+    /** Reads one page of Moxfield deck search results, keeping only decks by [user] when authors are listed. */
+    internal fun parseMoxfieldProfile(root: JsonObject, user: String): List<ProfileDeck> {
+        val data = root["data"] as? JsonArray ?: return emptyList()
+        return data.mapNotNull { el ->
+            val d = el as? JsonObject ?: return@mapNotNull null
+            val id = d.str("publicId") ?: return@mapNotNull null
+            val authors = buildList {
+                (d["createdByUser"] as? JsonObject)?.str("userName")?.let { add(it) }
+                (d["authors"] as? JsonArray)?.forEach { a -> (a as? JsonObject)?.str("userName")?.let { add(it) } }
+            }
+            if (authors.isNotEmpty() && authors.none { it.equals(user, ignoreCase = true) }) return@mapNotNull null
+            val colors = ((d["colorIdentity"] ?: d["colors"]) as? JsonArray)
+                ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull()?.firstOrNull()?.uppercaseChar() }
+                .orEmpty().let { cs -> "WUBRG".filter { it in cs } }
+            ProfileDeck(
+                id = id,
+                name = d.str("name") ?: "Moxfield deck",
+                format = d.str("format") ?: "",
+                colors = colors,
+                mainboardCount = d["mainboardCount"]?.jsonPrimitive?.intOrNull ?: 0,
+                updated = d.str("lastUpdatedAtUtc")?.take(10),
+                url = d.str("publicUrl") ?: "https://moxfield.com/decks/$id",
+            )
+        }
     }
 
     // ─────────────────────────── Archidekt ───────────────────────────

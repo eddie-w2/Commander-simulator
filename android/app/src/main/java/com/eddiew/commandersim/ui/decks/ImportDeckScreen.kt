@@ -63,7 +63,7 @@ fun hudFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
-fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
+fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit, onProfile: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var text by rememberSaveable { mutableStateOf("") }
     var owned by rememberSaveable { mutableStateOf(false) }
@@ -76,7 +76,8 @@ fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
     val clipboard = LocalClipboardManager.current
 
     val isLink = DeckLinkImporter.isDeckLink(text)
-    val local = remember(text) { if (isLink || text.isBlank()) null else vm.previewText(text) }
+    val isProfile = DeckLinkImporter.moxfieldProfileUser(text) != null
+    val local = remember(text) { if (isLink || isProfile || text.isBlank()) null else vm.previewText(text) }
     val preview = resolved ?: local
 
     // Links are fetched, and lists without a marked commander are checked against Scryfall,
@@ -86,7 +87,7 @@ fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
         error = null
         picked = emptySet()
         legendary = emptyList()
-        if (text.isBlank()) return@LaunchedEffect
+        if (text.isBlank() || isProfile) return@LaunchedEffect
         val needsWork = isLink || (local != null && local.commanders.isEmpty() && local.cards.isNotEmpty())
         if (!needsWork) return@LaunchedEffect
         delay(if (isLink) 100 else 700)
@@ -133,6 +134,10 @@ fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
                     checked = owned, onCheckedChange = { owned = it },
                     colors = SwitchDefaults.colors(checkedThumbColor = Hud.Bg, checkedTrackColor = Hud.Cyan, uncheckedTrackColor = Hud.Grid),
                 )
+            }
+            if (isProfile) {
+                Notice("That's a Moxfield profile. Import several of its decks at once:", color = Hud.Electric)
+                HudButton("Choose decks from this profile", { onProfile(text.trim()) }, Modifier.fillMaxWidth())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudOutlineButton("Paste", { clipboard.getText()?.text?.let { text = it } })
