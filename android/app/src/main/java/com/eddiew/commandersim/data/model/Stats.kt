@@ -47,6 +47,8 @@ data class SimMeta(
     val adjudicated: Int,
     val avgTurns: Double,
     val avgGameMs: Double,
+    /** Index = rounds - 1, value = games that lasted that long. */
+    val roundHistogram: List<Int> = emptyList(),
 )
 
 @Serializable
@@ -123,6 +125,8 @@ data class SourceDamage(
     val killShots: Int,
     /** Per game, keyed by opposing deck id. */
     val perOpponent: List<NamedValue>,
+    /** Avg damage per game in each round. */
+    val byRound: List<Double> = emptyList(),
 )
 
 /** A card (from any deck) that dealt the final damage to a player. */

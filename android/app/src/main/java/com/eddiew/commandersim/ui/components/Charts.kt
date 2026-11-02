@@ -225,7 +225,9 @@ fun DonutChart(
     centerTop: String = "",
     centerBottom: String = "",
     size: Dp = 128.dp,
+    colors: List<Color>? = null,
 ) {
+    fun colorAt(i: Int) = colors?.getOrNull(i) ?: Hud.Series[i % Hud.Series.size]
     val reveal = rememberReveal(slices)
     val total = slices.sumOf { it.second }.let { if (it <= 0) 1.0 else it }
     val tm = rememberTextMeasurer()
@@ -238,7 +240,7 @@ fun DonutChart(
             var start = -90f
             slices.forEachIndexed { i, (_, v) ->
                 val sweep = (v / total * 360f).toFloat() * reveal
-                val c = Hud.Series[i % Hud.Series.size]
+                val c = colorAt(i)
                 drawArc(c.copy(alpha = 0.25f), start, sweep, false, Offset(inset, inset), arcSize, style = Stroke(stroke + 6.dp.toPx()))
                 drawArc(c, start + 0.8f, (sweep - 1.6f).coerceAtLeast(0.1f), false, Offset(inset, inset), arcSize, style = Stroke(stroke))
                 start += sweep
@@ -252,7 +254,7 @@ fun DonutChart(
         Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.weight(1f)) {
             slices.forEachIndexed { i, (name, v) ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).background(Hud.Series[i % Hud.Series.size]))
+                    Box(Modifier.size(8.dp).background(colorAt(i)))
                     Spacer(Modifier.width(6.dp))
                     Text(name, style = MaterialTheme.typography.bodySmall, color = Hud.Text, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(pct(v / total, 0), style = MaterialTheme.typography.labelMedium, color = Hud.Ice)

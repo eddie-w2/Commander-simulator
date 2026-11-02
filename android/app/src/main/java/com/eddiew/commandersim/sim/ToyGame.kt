@@ -132,6 +132,7 @@ internal class CardTrack {
     var removed = 0
     var countered = 0
     var dmgBySeat: IntArray? = null
+    var dmgByRound: IntArray? = null
     val removedBy = HashMap<String, Int>() // "card|seat"
 }
 
@@ -535,6 +536,8 @@ internal class ToyGame(private val profiles: List<DeckProfile>, private val rng:
         if (combat) ct.combatDamage += amount else ct.nonCombatDamage += amount
         val bySeat = ct.dmgBySeat ?: IntArray(n).also { ct.dmgBySeat = it }
         bySeat[dst.seat] += amount
+        val byRound = ct.dmgByRound ?: IntArray(MAX_TURNS).also { ct.dmgByRound = it }
+        byRound[t] += amount
         var why = cause
         if (combat && card.isCommander) {
             src.track.dmgCommander += amount

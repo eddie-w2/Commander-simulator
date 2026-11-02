@@ -59,6 +59,7 @@ private class CardAcc(val type: CardType, val mv: Double?) {
     var removed = 0
     val dmgToDeck = HashMap<String, Long>()
     val removedBy = HashMap<String, Int>()
+    val dmgByRound = LongArray(MAX_TURNS)
 }
 
 /** Accumulates every game one deck played and builds its [DeckReport]. */
@@ -199,6 +200,7 @@ internal class DeckAccumulator(val deck: Deck) {
                 a.killShots += ct.killShots
                 a.removals += ct.removals; a.removed += ct.removed
                 ct.dmgBySeat?.forEachIndexed { s, v -> if (v > 0) a.dmgToDeck.merge(seatDeckIds[s], v.toLong(), Long::plus) }
+                ct.dmgByRound?.forEachIndexed { i, v -> a.dmgByRound[i] += v.toLong() }
                 ct.removedBy.forEach { (k, v) -> a.removedBy.merge(relabel(k), v, Int::plus) }
             }
         }
@@ -337,6 +339,7 @@ internal class DeckAccumulator(val deck: Deck) {
                 killShots = a.killShots,
                 perOpponent = a.dmgToDeck.map { NamedValue(it.key, it.value.toDouble() / (gamesWith[it.key] ?: 1)) }
                     .sortedByDescending { it.value },
+                byRound = a.dmgByRound.map { it.toDouble() / games },
             )
         }
         val damage = DamageStats(

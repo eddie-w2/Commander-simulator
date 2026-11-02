@@ -27,7 +27,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.eddiew.commandersim.AppViewModel
 import com.eddiew.commandersim.data.model.CardType
+import com.eddiew.commandersim.data.model.DeckVersion
 import com.eddiew.commandersim.data.model.diffDecks
+import com.eddiew.commandersim.ui.components.HudChip
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import java.text.DateFormat
+import java.util.Date
 import com.eddiew.commandersim.ui.components.HudButton
 import com.eddiew.commandersim.ui.components.ColorPips
 import com.eddiew.commandersim.ui.components.ColumnChart
@@ -44,6 +50,11 @@ import com.eddiew.commandersim.ui.theme.Hud
 fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVariant: (String) -> Unit, onRunAb: () -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var syncMessage by remember { mutableStateOf<String?>(null) }
+    var confirmRestore by remember { mutableStateOf<DeckVersion?>(null) }
+    var showAllVersions by remember { mutableStateOf(false) }
     val deck = decks.firstOrNull { it.id == deckId }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -74,6 +85,63 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
                 HudOutlineButton("← Back", onBack, color = Hud.Muted)
                 HudOutlineButton(if (deck.id in syncing) "Syncing…" else "Re-sync Scryfall", { vm.resync(deck.id) })
                 HudOutlineButton("Delete", { confirmDelete = true }, color = Hud.Negative)
+            }
+        }
+        item {
+            HudChip(if (deck.owned) "✓ Owned" else "Mark as owned", deck.owned, { vm.setOwned(deck.id, !deck.owned) }, color = Hud.Cyan)
+        }
+        if (deck.sourceUrl != null) {
+            item {
+                HudPanel(title = "Linked deck", accent = Hud.Electric) {
+                    Text(deck.sourceUrl, style = MaterialTheme.typography.bodySmall, color = Hud.Ice, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        deck.syncedAt?.let { "Last synced " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) }
+                            ?: "Not synced yet",
+                        style = MaterialTheme.typography.labelSmall, color = Hud.Dim,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    HudButton(
+                        if (deck.id in syncing) "Syncing…" else "Sync from link",
+                        { scope.launch { syncMessage = vm.syncDeck(deck.id).message } },
+                        Modifier.fillMaxWidth(), enabled = deck.id !in syncing,
+                    )
+                    syncMessage?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Notice(it, color = Hud.Electric)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("The current list is saved under Versions before any change, so you can switch back.",
+                        style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+                }
+            }
+        }
+        val versions = history[deck.id].orEmpty()
+        if (versions.isNotEmpty()) {
+            item {
+                HudPanel(title = "Versions · ${versions.size} saved") {
+                    val shown = if (showAllVersions) versions else versions.take(5)
+                    shown.forEach { v ->
+                        val diff = diffDecks(v.asDeck(deck), deck)
+                        Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(v.reason, style = MaterialTheme.typography.bodyMedium, color = Hud.Text)
+                                Text(
+                                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(v.savedAt)) +
+                                        " · ${v.cardCount} cards · " +
+                                        if (diff.added.isEmpty() && diff.removed.isEmpty()) "same as now"
+                                        else "now +${diff.added.sumOf { it.quantity }} / −${diff.removed.sumOf { it.quantity }}",
+                                    style = MaterialTheme.typography.labelSmall, color = Hud.Dim,
+                                )
+                            }
+                            if (diff.added.isNotEmpty() || diff.removed.isNotEmpty()) {
+                                HudOutlineButton("Restore", { confirmRestore = v })
+                            }
+                        }
+                    }
+                    if (!showAllVersions && versions.size > 5) {
+                        HudOutlineButton("Show all ${versions.size}", { showAllVersions = true }, Modifier.fillMaxWidth())
+                    }
+                }
             }
         }
         item {
@@ -152,6 +220,30 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
+    }
+
+    confirmRestore?.let { v ->
+        val diff = diffDecks(deck, v.asDeck(deck))
+        AlertDialog(
+            onDismissRequest = { confirmRestore = null },
+            containerColor = Hud.SurfaceHi,
+            title = { Text("Restore this version?", color = Hud.Text) },
+            text = {
+                Column {
+                    Text("${v.reason} · ${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(v.savedAt))}", color = Hud.Muted)
+                    Spacer(Modifier.height(6.dp))
+                    diff.removed.take(8).forEach { Text("− ${it.name}", color = Hud.Negative) }
+                    diff.added.take(8).forEach { Text("+ ${it.name}", color = Hud.Positive) }
+                    if (diff.removed.size + diff.added.size > 16) Text("…", color = Hud.Dim)
+                    Spacer(Modifier.height(6.dp))
+                    Text("The current list is saved as a version first.", color = Hud.Dim)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.restoreVersion(deck.id, v.versionId); confirmRestore = null }) { Text("RESTORE", color = Hud.Cyan) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRestore = null }) { Text("CANCEL", color = Hud.Muted) } },
+        )
     }
 
     if (confirmDelete) {

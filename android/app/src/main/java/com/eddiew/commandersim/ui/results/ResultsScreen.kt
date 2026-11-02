@@ -33,6 +33,7 @@ import com.eddiew.commandersim.ui.components.HudPanel
 import com.eddiew.commandersim.ui.components.Notice
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.Sparkline
+import com.eddiew.commandersim.ui.components.Tile
 import com.eddiew.commandersim.ui.components.TileRow
 import com.eddiew.commandersim.ui.components.WinRateBar
 import com.eddiew.commandersim.ui.components.num
@@ -43,7 +44,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun ResultsScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit, onSimulate: () -> Unit) {
+fun ResultsScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit, onSimulate: () -> Unit, onGames: () -> Unit) {
     val report by vm.report.collectAsStateWithLifecycle()
     val r = report
     Column(Modifier.fillMaxSize()) {
@@ -61,12 +62,12 @@ fun ResultsScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit, onSimulate: ()
             }
             return@Column
         }
-        ResultsBody(r, onOpenDeck)
+        ResultsBody(r, onOpenDeck, onGames)
     }
 }
 
 @Composable
-private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit) {
+private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit, onGames: () -> Unit) {
     val ranked = r.ranked
     val top = ranked.firstOrNull()
     val scaleMax = (r.decks.maxOfOrNull { it.outcome.ci95High } ?: 0.5).coerceAtLeast(0.4) + 0.05
@@ -106,9 +107,9 @@ private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit) {
         }
         item {
             TileRow(
-                Triple("Games", "%,d".format(r.meta.games), null),
-                Triple("Avg length", num(r.meta.avgTurns, 1), "rounds"),
-                Triple("Timeouts", pct(r.meta.timeouts.toDouble() / r.meta.games.coerceAtLeast(1)), "draws"),
+                Tile("Games", "%,d".format(r.meta.games), null, onGames),
+                Tile("Avg length", num(r.meta.avgTurns, 1), "rounds", onGames),
+                Tile("Timeouts", pct(r.meta.timeouts.toDouble() / r.meta.games.coerceAtLeast(1)), "draws", onGames),
             )
         }
         item {

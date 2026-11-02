@@ -187,28 +187,67 @@ fun StatTile(
     modifier: Modifier = Modifier,
     sub: String? = null,
     accent: Color = Hud.Electric,
+    onClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(3.dp)
     Column(
         modifier
             .clip(shape)
             .background(Hud.SurfaceHi)
-            .border(1.dp, Hud.Outline, shape)
+            .border(1.dp, if (onClick != null) accent.copy(alpha = 0.45f) else Hud.Outline, shape)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .drawBehind { drawRect(accent, size = Size(size.width, 2.dp.toPx())) }
             .padding(horizontal = 10.dp, vertical = 9.dp),
     ) {
-        Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Hud.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Hud.Muted, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (onClick != null) Text("›", color = accent, fontSize = 13.sp)
+        }
         Spacer(Modifier.height(2.dp))
         Text(value, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Hud.Text, maxLines = 1)
         if (sub != null) Text(sub, style = MaterialTheme.typography.labelSmall, color = accent, maxLines = 1)
     }
 }
 
+/** One stat tile; [onClick] makes it open a detail screen. */
+data class Tile(val label: String, val value: String, val sub: String? = null, val onClick: (() -> Unit)? = null)
+
 /** A row of stat tiles that share the width evenly. */
 @Composable
 fun TileRow(vararg tiles: Triple<String, String, String?>, accent: Color = Hud.Electric) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         tiles.forEach { (label, value, sub) -> StatTile(label, value, Modifier.weight(1f), sub, accent) }
+    }
+}
+
+/** A row of tappable stat tiles. */
+@Composable
+fun TileRow(vararg tiles: Tile, accent: Color = Hud.Electric) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        tiles.forEach { t -> StatTile(t.label, t.value, Modifier.weight(1f), t.sub, accent, t.onClick) }
+    }
+}
+
+/** "VIEW DETAIL ›" link for a panel's trailing slot. */
+@Composable
+fun DetailLink(onClick: () -> Unit, text: String = "Detail") {
+    Text(
+        "${text.uppercase()} ›",
+        style = MaterialTheme.typography.labelSmall,
+        color = Hud.Electric,
+        modifier = Modifier.clip(RoundedCornerShape(2.dp)).clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 2.dp),
+    )
+}
+
+/** Proportional segments in one bar, e.g. a colour breakdown. */
+@Composable
+fun StackedBar(segments: List<Pair<Color, Double>>, modifier: Modifier = Modifier, height: Dp = 12.dp) {
+    val total = segments.sumOf { it.second }
+    Row(modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(2.dp)).background(Hud.Grid)) {
+        if (total > 0) segments.filter { it.second > 0 }.forEach { (c, v) ->
+            Box(Modifier.weight((v / total).toFloat()).height(height).background(c))
+        }
     }
 }
 

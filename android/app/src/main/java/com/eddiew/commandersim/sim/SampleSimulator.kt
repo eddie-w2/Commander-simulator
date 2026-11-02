@@ -65,6 +65,7 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
         var timeouts = 0
         var turnSum = 0L
         var nanoSum = 0L
+        val roundHist = IntArray(MAX_TURNS)
 
         fun profile(d: Deck) = profiles.getOrPut(d.id) { DeckProfile.from(d) }
 
@@ -74,6 +75,7 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
             nanoSum += System.nanoTime() - start
             games++
             turnSum += result.rounds
+            roundHist[(result.rounds - 1).coerceIn(0, MAX_TURNS - 1)]++
             if (result.winnerSeat == null) timeouts++
             val ids = seats.map { it.id }
             seats.forEachIndexed { seat, deck ->
@@ -172,6 +174,7 @@ class SampleSimulator(private val seed: Long = System.currentTimeMillis()) : Sim
                     games = games, timeouts = timeouts, adjudicated = 0,
                     avgTurns = turnSum.toDouble() / games.coerceAtLeast(1),
                     avgGameMs = nanoSum / 1e6 / games.coerceAtLeast(1),
+                    roundHistogram = roundHist.toList(),
                 ),
                 ab = fullAb,
             )

@@ -17,6 +17,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,6 +65,7 @@ fun hudFieldColors() = OutlinedTextFieldDefaults.colors(
 fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var text by rememberSaveable { mutableStateOf("") }
+    var owned by rememberSaveable { mutableStateOf(false) }
     var picked by remember { mutableStateOf(setOf<String>()) }
     var filter by remember { mutableStateOf("") }
     var resolved by remember { mutableStateOf<ImportPreview?>(null) }
@@ -117,6 +120,19 @@ fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 320.dp),
                 colors = hudFieldColors(),
             )
+            Row(
+                Modifier.fillMaxWidth().clickable { owned = !owned }.padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("I own this deck", style = MaterialTheme.typography.bodyMedium, color = Hud.Text)
+                    Text("Owned decks appear in the Collection tab.", style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+                }
+                Switch(
+                    checked = owned, onCheckedChange = { owned = it },
+                    colors = SwitchDefaults.colors(checkedThumbColor = Hud.Bg, checkedTrackColor = Hud.Cyan, uncheckedTrackColor = Hud.Grid),
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudOutlineButton("Paste", { clipboard.getText()?.text?.let { text = it } })
                 if (text.isNotEmpty()) HudOutlineButton("Clear", { text = ""; name = "" }, color = Hud.Muted)
@@ -190,7 +206,7 @@ fun ImportDeckScreen(vm: AppViewModel, onDone: () -> Unit) {
                 HudButton(
                     "Save deck",
                     onClick = {
-                        preview?.let { vm.saveDeck(name, it, picked.toList()) }
+                        preview?.let { vm.saveDeck(name, it, picked.toList(), owned) }
                         onDone()
                     },
                     modifier = Modifier.weight(1f),

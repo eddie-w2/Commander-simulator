@@ -51,7 +51,9 @@ import com.eddiew.commandersim.ui.components.NeonBar
 import com.eddiew.commandersim.ui.components.RadarChart
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.components.Series
+import com.eddiew.commandersim.ui.components.Tile
 import com.eddiew.commandersim.ui.components.TileRow
+import com.eddiew.commandersim.ui.components.DetailLink
 import com.eddiew.commandersim.ui.components.num
 import com.eddiew.commandersim.ui.components.pct
 import com.eddiew.commandersim.ui.components.signedPct
@@ -64,7 +66,7 @@ private enum class ReportTab(val label: String) {
 }
 
 @Composable
-fun DeckReportScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onCard: (String) -> Unit) {
+fun DeckReportScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onCard: (String) -> Unit, onMetric: (Metric) -> Unit) {
     val report by vm.report.collectAsStateWithLifecycle()
     val r = report
     val d = r?.deck(deckId)
@@ -100,14 +102,14 @@ fun DeckReportScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onCar
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             when (tab) {
-                ReportTab.OVERVIEW -> overview(r, d, onCard)
-                ReportTab.DAMAGE -> damage(r, d, onCard)
+                ReportTab.OVERVIEW -> overview(r, d, onCard, onMetric)
+                ReportTab.DAMAGE -> damage(r, d, onCard, onMetric)
                 ReportTab.CARDS -> item { CardsTab(d, onCard) }
                 ReportTab.WINLOSS -> winLoss(d)
                 ReportTab.THREATS -> threats(r, d)
-                ReportTab.REMOVAL -> removal(r, d, onCard)
-                ReportTab.RESOURCES -> resources(d)
-                ReportTab.COMBAT -> combat(d)
+                ReportTab.REMOVAL -> removal(r, d, onCard, onMetric)
+                ReportTab.RESOURCES -> resources(d, onMetric)
+                ReportTab.COMBAT -> combat(d, onMetric)
             }
         }
     }
@@ -143,20 +145,20 @@ private fun profileAxes(r: SimulationReport, d: DeckReport): List<Pair<String, D
     )
 }
 
-private fun LazyListScope.overview(r: SimulationReport, d: DeckReport, onCard: (String) -> Unit) {
+private fun LazyListScope.overview(r: SimulationReport, d: DeckReport, onCard: (String) -> Unit, go: (Metric) -> Unit) {
     val o = d.outcome
     item {
         TileRow(
-            Triple("Win rate", pct(o.winRate), "${pct(o.ci95Low, 0)}–${pct(o.ci95High, 0)}"),
-            Triple("Avg place", num(o.avgPlace, 2), "of 4"),
-            Triple("Games", "%,d".format(o.games), "${o.draws} draws"),
+            Tile("Win rate", pct(o.winRate), "${pct(o.ci95Low, 0)}–${pct(o.ci95High, 0)}") { go(Metric.WIN_RATE) },
+            Tile("Avg place", num(o.avgPlace, 2), "of 4") { go(Metric.AVG_PLACE) },
+            Tile("Games", "%,d".format(o.games), "${o.draws} draws") { go(Metric.GAMES) },
         )
     }
     item {
         TileRow(
-            Triple("Kills/game", num(d.damage.killsPerGame, 2), null),
-            Triple("Eliminated", num(o.avgEliminationTurn, 1), "avg round"),
-            Triple("Cmdr cast", num(d.commanderStats.avgFirstCastTurn, 1), "first round"),
+            Tile("Kills/game", num(d.damage.killsPerGame, 2), null) { go(Metric.KILLS) },
+            Tile("Eliminated", num(o.avgEliminationTurn, 1), "avg round") { go(Metric.ELIMINATION) },
+            Tile("Cmdr cast", num(d.commanderStats.avgFirstCastTurn, 1), "first round") { go(Metric.COMMANDER_CAST) },
             accent = Hud.Cyan,
         )
     }
@@ -179,7 +181,7 @@ private fun LazyListScope.overview(r: SimulationReport, d: DeckReport, onCard: (
         }
     }
     item {
-        HudPanel(title = "Cards that win · biggest positive impact") {
+        HudPanel(title = "Cards that win · biggest positive impact", trailing = { DetailLink({ go(Metric.WIN_RATE) }) }) {
             ImpactList(d.cards.filter { it.type != CardType.LAND && it.impact != null }.sortedByDescending { it.impact }.take(6), onCard)
         }
     }
@@ -190,19 +192,19 @@ private fun LazyListScope.overview(r: SimulationReport, d: DeckReport, onCard: (
     }
     item { HudPanel(title = "Deck profile · relative to the field") { RadarChart(profileAxes(r, d)) } }
     item {
-        HudPanel(title = "Finishing position") {
+        HudPanel(title = "Finishing position", trailing = { DetailLink({ go(Metric.AVG_PLACE) }) }) {
             ColumnChart(o.placements.map { it.toDouble() / o.games.coerceAtLeast(1) }, listOf("1ST", "2ND", "3RD", "4TH"),
                 valueFormat = { pct(it, 0) }, height = 130.dp)
         }
     }
     item {
-        HudPanel(title = "Winning round") {
+        HudPanel(title = "Winning round", trailing = { DetailLink({ go(Metric.GAMES) }) }) {
             val last = (o.winTurnHistogram.indexOfLast { it > 0 } + 1).coerceAtLeast(5)
             ColumnChart(o.winTurnHistogram.take(last).map { it.toDouble() }, List(last) { "${it + 1}" }, height = 130.dp)
         }
     }
     item {
-        HudPanel(title = "How it wins") {
+        HudPanel(title = "How it wins", trailing = { DetailLink({ go(Metric.WIN_RATE) }) }) {
             DonutChart(o.winConditions.map { it.condition.label to it.count.toDouble() }, centerTop = "${o.wins}", centerBottom = "wins")
         }
     }
@@ -212,24 +214,24 @@ private fun LazyListScope.overview(r: SimulationReport, d: DeckReport, onCard: (
         }
     }
     item {
-        HudPanel(title = "Win rate by seat (turn order)") {
+        HudPanel(title = "Win rate by seat (turn order)", trailing = { DetailLink({ go(Metric.WIN_RATE) }) }) {
             ColumnChart(o.seatWinRate, listOf("SEAT 1", "SEAT 2", "SEAT 3", "SEAT 4"), valueFormat = { pct(it, 0) },
                 baseline = 0.25, height = 130.dp)
         }
     }
     item {
-        HudPanel(title = "Commander") {
+        HudPanel(title = "Commander", trailing = { DetailLink({ go(Metric.COMMANDER_CAST) }) }) {
             val c = d.commanderStats
             TileRow(
-                Triple("Casts/game", num(c.castsPerGame, 2), null),
-                Triple("Tax paid", num(c.avgTaxPaid, 1), "mana/game"),
-                Triple("Removed", num(c.removedPerGame, 2), "per game"),
+                Tile("Casts/game", num(c.castsPerGame, 2), null) { go(Metric.COMMANDER_CASTS) },
+                Tile("Tax paid", num(c.avgTaxPaid, 1), "mana/game") { go(Metric.COMMANDER_TAX) },
+                Tile("Removed", num(c.removedPerGame, 2), "per game") { go(Metric.COMMANDER_REMOVED) },
             )
             Spacer(Modifier.height(8.dp))
             TileRow(
-                Triple("WR cast ≤R5", pct(c.winRateWhenCastByT5, 0), null),
-                Triple("WR never cast", pct(c.winRateWhenNeverCast, 0), null),
-                Triple("Cmdr damage", num(c.damagePerGame, 1), "per game"),
+                Tile("WR cast ≤R5", pct(c.winRateWhenCastByT5, 0), null) { go(Metric.COMMANDER_CAST) },
+                Tile("WR never cast", pct(c.winRateWhenNeverCast, 0), null) { go(Metric.COMMANDER_CAST) },
+                Tile("Cmdr damage", num(c.damagePerGame, 1), "per game") { go(Metric.DAMAGE_COMMANDER) },
             )
         }
     }
@@ -273,26 +275,26 @@ internal fun VerdictTag(v: CardVerdict) {
 
 // ───────────────────────────── Damage ─────────────────────────────
 
-private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (String) -> Unit) {
+private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (String) -> Unit, go: (Metric) -> Unit) {
     val dm = d.damage
     fun share(x: Double) = pct(x / dm.avgDealtToPlayers.coerceAtLeast(0.01), 0)
     item { Text("DEALT", style = MaterialTheme.typography.labelMedium, color = Hud.Electric) }
     item {
         TileRow(
-            Triple("To players", num(dm.avgDealtToPlayers, 1), "per game"),
-            Triple("Combat", num(dm.avgCombat, 1), share(dm.avgCombat)),
-            Triple("Non-combat", num(dm.avgNonCombat, 1), share(dm.avgNonCombat)),
+            Tile("To players", num(dm.avgDealtToPlayers, 1), "per game") { go(Metric.DAMAGE_DEALT) },
+            Tile("Combat", num(dm.avgCombat, 1), share(dm.avgCombat)) { go(Metric.DAMAGE_COMBAT) },
+            Tile("Non-combat", num(dm.avgNonCombat, 1), share(dm.avgNonCombat)) { go(Metric.DAMAGE_NONCOMBAT) },
         )
     }
     item {
         TileRow(
-            Triple("Commander", num(dm.avgCommanderDamage, 1), share(dm.avgCommanderDamage)),
-            Triple("To creatures", num(dm.avgDealtToCreatures, 1), null),
-            Triple("Kills", num(dm.killsPerGame, 2), "per game"),
+            Tile("Commander", num(dm.avgCommanderDamage, 1), share(dm.avgCommanderDamage)) { go(Metric.DAMAGE_COMMANDER) },
+            Tile("To creatures", num(dm.avgDealtToCreatures, 1), null) { go(Metric.DAMAGE_CREATURES) },
+            Tile("Kills", num(dm.killsPerGame, 2), "per game") { go(Metric.KILLS) },
         )
     }
     item {
-        HudPanel(title = "Damage by card · per game (tap for detail)") {
+        HudPanel(title = "Damage by card · per game", trailing = { DetailLink({ go(Metric.DAMAGE_DEALT) }) }) {
             Row {
                 Text("CARD", style = MaterialTheme.typography.labelSmall, color = Hud.Muted, modifier = Modifier.weight(1f))
                 listOf("TOTAL", "COMBAT", "OTHER", "KILLS").forEach {
@@ -333,33 +335,33 @@ private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (St
         }
     }
     item {
-        HudPanel(title = "Damage per round · dealt vs taken") {
+        HudPanel(title = "Damage per round · dealt vs taken", trailing = { DetailLink({ go(Metric.DAMAGE_DEALT) }) }) {
             LineChart(listOf(Series("Dealt", dm.perTurnDealt, Hud.Electric), Series("Taken", dm.perTurnTaken, Hud.Negative)))
         }
     }
     item {
-        HudPanel(title = "Damage dealt to each opponent · per game together") {
+        HudPanel(title = "Damage dealt to each opponent · per game together", trailing = { DetailLink({ go(Metric.DAMAGE_DEALT) }) }) {
             BarList(dm.byTarget.map { r.name(it.name) to it.value }, color = Hud.Cyan)
         }
     }
     item { Text("TAKEN", style = MaterialTheme.typography.labelMedium, color = Hud.Negative, modifier = Modifier.padding(top = 6.dp)) }
     item {
         TileRow(
-            Triple("Taken", num(dm.avgTaken, 1), "per game"),
-            Triple("Combat", num(dm.avgTakenCombat, 1), null),
-            Triple("Non-combat", num(dm.avgTakenNonCombat, 1), null),
+            Tile("Taken", num(dm.avgTaken, 1), "per game") { go(Metric.DAMAGE_TAKEN) },
+            Tile("Combat", num(dm.avgTakenCombat, 1), null) { go(Metric.TAKEN_COMBAT) },
+            Tile("Non-combat", num(dm.avgTakenNonCombat, 1), null) { go(Metric.TAKEN_NONCOMBAT) },
             accent = Hud.Negative,
         )
     }
     item {
         TileRow(
-            Triple("Cmdr taken", num(dm.avgTakenCommander, 1), null),
-            Triple("Life gained", num(dm.avgLifeGained, 1), "per game"),
+            Tile("Cmdr taken", num(dm.avgTakenCommander, 1), null) { go(Metric.TAKEN_COMMANDER) },
+            Tile("Life gained", num(dm.avgLifeGained, 1), "per game") { go(Metric.LIFE_GAINED) },
             accent = Hud.Positive,
         )
     }
     item {
-        HudPanel(title = "Life total by round", accent = Hud.Positive) {
+        HudPanel(title = "Life total by round", accent = Hud.Positive, trailing = { DetailLink({ go(Metric.DAMAGE_TAKEN) }) }) {
             LineChart(
                 listOf(
                     Series("You", d.life.avgLifeByTurn, Hud.Positive),
@@ -369,7 +371,7 @@ private fun LazyListScope.damage(r: SimulationReport, d: DeckReport, onCard: (St
         }
     }
     item {
-        HudPanel(title = "Who hurts you · damage per game together", accent = Hud.Negative) {
+        HudPanel(title = "Who hurts you · damage per game together", accent = Hud.Negative, trailing = { DetailLink({ go(Metric.DAMAGE_TAKEN) }) }) {
             BarList(dm.takenByDeck.map { r.name(it.name) to it.value }, color = Hud.Negative)
         }
     }
@@ -576,26 +578,26 @@ private fun NemesisList(r: SimulationReport, d: DeckReport, items: List<com.eddi
 
 // ───────────────────────────── Removal ─────────────────────────────
 
-private fun LazyListScope.removal(r: SimulationReport, d: DeckReport, onCard: (String) -> Unit) {
+private fun LazyListScope.removal(r: SimulationReport, d: DeckReport, onCard: (String) -> Unit, go: (Metric) -> Unit) {
     val rm = d.removal
     item {
         TileRow(
-            Triple("Removal cast", num(rm.spellsPerGame, 2), "per game"),
-            Triple("Removed", num(rm.permanentsRemovedPerGame, 2), "opp. perms"),
-            Triple("Lost", num(rm.receivedPerGame, 2), "own perms"),
+            Tile("Removal cast", num(rm.spellsPerGame, 2), "per game") { go(Metric.REMOVAL_CAST) },
+            Tile("Removed", num(rm.permanentsRemovedPerGame, 2), "opp. perms") { go(Metric.REMOVED) },
+            Tile("Lost", num(rm.receivedPerGame, 2), "own perms") { go(Metric.LOST) },
         )
     }
     item {
         TileRow(
-            Triple("Counters", num(rm.counterspellsPerGame, 2), "per game"),
-            Triple("Board wipes", num(rm.boardWipesPerGame, 2), "per game"),
-            Triple("Sacrificed", num(rm.sacrificedPerGame, 2), "own"),
+            Tile("Counters", num(rm.counterspellsPerGame, 2), "per game") { go(Metric.COUNTERSPELLS) },
+            Tile("Board wipes", num(rm.boardWipesPerGame, 2), "per game") { go(Metric.WIPES) },
+            Tile("Sacrificed", num(rm.sacrificedPerGame, 2), "own") { go(Metric.SACRIFICED) },
             accent = Hud.Cyan,
         )
     }
-    item { HudPanel(title = "What it removes · by type") { BarList(rm.removedByType.map { it.name to it.value }, valueFormat = { num(it, 2) }) } }
+    item { HudPanel(title = "What it removes · by type", trailing = { DetailLink({ go(Metric.REMOVED) }) }) { BarList(rm.removedByType.map { it.name to it.value }, valueFormat = { num(it, 2) }) } }
     item {
-        HudPanel(title = "Removal MVPs · removals per game") {
+        HudPanel(title = "Removal MVPs · removals per game", trailing = { DetailLink({ go(Metric.REMOVAL_CAST) }) }) {
             val mvps = d.cards.filter { it.removalsPerGame > 0 }.sortedByDescending { it.removalsPerGame }.take(10)
             mvps.forEach { c ->
                 Row(Modifier.fillMaxWidth().clickable { onCard(c.name) }.padding(vertical = 4.dp)) {
@@ -617,56 +619,56 @@ private fun LazyListScope.removal(r: SimulationReport, d: DeckReport, onCard: (S
 
 // ───────────────────────────── Resources ─────────────────────────────
 
-private fun LazyListScope.resources(d: DeckReport) {
+private fun LazyListScope.resources(d: DeckReport, go: (Metric) -> Unit) {
     val rs = d.resources
     item {
         TileRow(
-            Triple("Cards drawn", num(rs.avgCardsDrawn, 1), "per game"),
-            Triple("Max hand", num(rs.avgMaxHandSize, 1), "avg"),
-            Triple("Discarded", num(rs.avgDiscarded, 1), "per game"),
+            Tile("Cards drawn", num(rs.avgCardsDrawn, 1), "per game") { go(Metric.CARDS_DRAWN) },
+            Tile("Max hand", num(rs.avgMaxHandSize, 1), "avg") { go(Metric.MAX_HAND) },
+            Tile("Discarded", num(rs.avgDiscarded, 1), "per game") { go(Metric.DISCARDED) },
         )
     }
     item {
         TileRow(
-            Triple("Lands played", num(rs.avgLandsPlayed, 1), "per game"),
-            Triple("Mulligan", pct(rs.mulliganRate, 0), "${num(rs.avgMulligans, 2)} avg"),
-            Triple("Milled", num(rs.avgMilled, 1), null),
+            Tile("Lands played", num(rs.avgLandsPlayed, 1), "per game") { go(Metric.LANDS_PLAYED) },
+            Tile("Mulligan", pct(rs.mulliganRate, 0), "${num(rs.avgMulligans, 2)} avg") { go(Metric.MULLIGANS) },
+            Tile("Milled", num(rs.avgMilled, 1), null) { go(Metric.MILLED) },
             accent = Hud.Cyan,
         )
     }
-    item { HudPanel(title = "Hand size at start of round") { LineChart(listOf(Series("Hand", rs.avgHandSizeByTurn, Hud.Electric))) } }
-    item { HudPanel(title = "Cards drawn per round") { LineChart(listOf(Series("Draws", rs.drawsPerTurn, Hud.Cyan)), yFormat = { num(it, 2) }) } }
-    item { HudPanel(title = "Lands in play") { LineChart(listOf(Series("Lands", rs.landsInPlayByTurn, Hud.Positive))) } }
+    item { HudPanel(title = "Hand size at start of round", trailing = { DetailLink({ go(Metric.MAX_HAND) }) }) { LineChart(listOf(Series("Hand", rs.avgHandSizeByTurn, Hud.Electric))) } }
+    item { HudPanel(title = "Cards drawn per round", trailing = { DetailLink({ go(Metric.CARDS_DRAWN) }) }) { LineChart(listOf(Series("Draws", rs.drawsPerTurn, Hud.Cyan)), yFormat = { num(it, 2) }) } }
+    item { HudPanel(title = "Lands in play", trailing = { DetailLink({ go(Metric.LANDS_PLAYED) }) }) { LineChart(listOf(Series("Lands", rs.landsInPlayByTurn, Hud.Positive))) } }
     item {
-        HudPanel(title = "Land drop hit rate") {
+        HudPanel(title = "Land drop hit rate", trailing = { DetailLink({ go(Metric.LANDS_PLAYED) }) }) {
             LineChart(listOf(Series("Land drop", rs.landDropHitRate, Hud.Positive)), fixedMax = 1.0, yFormat = { pct(it, 0) })
         }
     }
-    item { HudPanel(title = "Mana spent per round") { LineChart(listOf(Series("Mana", rs.avgManaSpentByTurn, Hud.Ice))) } }
+    item { HudPanel(title = "Mana spent per round", trailing = { DetailLink({ go(Metric.MANA_SPENT) }) }) { LineChart(listOf(Series("Mana", rs.avgManaSpentByTurn, Hud.Ice))) } }
 }
 
 // ───────────────────────────── Combat & board ─────────────────────────────
 
-private fun LazyListScope.combat(d: DeckReport) {
+private fun LazyListScope.combat(d: DeckReport, go: (Metric) -> Unit) {
     val c = d.combat
     val b = d.board
     item {
         TileRow(
-            Triple("Attacks", num(c.attacksPerGame, 1), "per game"),
-            Triple("Attackers", num(c.avgAttackers, 1), "per attack"),
-            Triple("Blocks", num(c.blocksPerGame, 1), "per game"),
+            Tile("Attacks", num(c.attacksPerGame, 1), "per game") { go(Metric.ATTACKS) },
+            Tile("Attackers", num(c.avgAttackers, 1), "per attack") { go(Metric.ATTACKERS) },
+            Tile("Blocks", num(c.blocksPerGame, 1), "per game") { go(Metric.BLOCKS) },
         )
     }
     item {
         TileRow(
-            Triple("Lost in combat", num(c.creaturesLostPerGame, 1), "creatures"),
-            Triple("Tokens", num(b.tokensPerGame, 1), "per game"),
-            Triple("Counters", num(b.countersPerGame, 1), "placed"),
+            Tile("Lost in combat", num(c.creaturesLostPerGame, 1), "creatures") { go(Metric.COMBAT_LOSSES) },
+            Tile("Tokens", num(b.tokensPerGame, 1), "per game") { go(Metric.TOKENS) },
+            Tile("Counters", num(b.countersPerGame, 1), "placed") { go(Metric.COUNTERS_PLACED) },
             accent = Hud.Cyan,
         )
     }
     item {
-        HudPanel(title = "Board size by round") {
+        HudPanel(title = "Board size by round", trailing = { DetailLink({ go(Metric.BOARD) }) }) {
             LineChart(listOf(Series("Permanents", b.avgPermanentsByTurn, Hud.Electric), Series("Creatures", b.avgCreaturesByTurn, Hud.Cyan)))
         }
     }

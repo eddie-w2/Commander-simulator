@@ -15,6 +15,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,20 +33,34 @@ import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.theme.Hud
 
 @Composable
-fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit) {
+fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
     val names = decks.associate { it.id to it.name }
+    var ownedOnly by rememberSaveable { mutableStateOf(false) }
+    val shown = if (ownedOnly) decks.filter { it.owned } else decks
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Deck Bay", "${decks.size} decks · ${settings.pool.count { id -> decks.any { it.id == id } }} in the simulation pool")
+        ScreenHeader(
+            "Deck Bay",
+            "${decks.size} decks · ${decks.count { it.owned }} owned · ${settings.pool.count { id -> decks.any { it.id == id } }} in pool",
+            trailing = { HudChip("⚙", false, onSettings, color = Hud.Muted) },
+        )
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item { HudButton("+ Import deck", onImport, Modifier.fillMaxWidth()) }
+            if (decks.isNotEmpty()) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        HudChip("All decks", !ownedOnly, { ownedOnly = false }, Modifier.weight(1f))
+                        HudChip("Owned", ownedOnly, { ownedOnly = true }, Modifier.weight(1f), color = Hud.Cyan)
+                    }
+                }
+            }
             if (decks.isEmpty()) {
                 item {
                     HudPanel(title = "No decks yet") {
@@ -55,7 +72,7 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
                     }
                 }
             }
-            items(decks, key = { it.id }) { deck ->
+            items(shown, key = { it.id }) { deck ->
                 DeckRow(
                     deck = deck,
                     inPool = deck.id in settings.pool,
@@ -77,6 +94,12 @@ private fun DeckRow(deck: Deck, inPool: Boolean, parentName: String?, syncing: B
                 Text(deck.name, style = MaterialTheme.typography.titleMedium, color = Hud.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!deck.name.equals(deck.commanderLabel, ignoreCase = true)) {
                     Text(deck.commanderLabel, style = MaterialTheme.typography.bodySmall, color = Hud.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (deck.owned || deck.sourceUrl != null) {
+                    Text(
+                        listOfNotNull(if (deck.owned) "OWNED" else null, if (deck.sourceUrl != null) "LINKED" else null).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall, color = Hud.Cyan,
+                    )
                 }
                 if (parentName != null) {
                     Text("VARIANT OF ${parentName.uppercase()}", style = MaterialTheme.typography.labelSmall, color = Hud.Electric,

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -36,6 +37,11 @@ import com.eddiew.commandersim.ui.decks.DecksScreen
 import com.eddiew.commandersim.ui.decks.ImportDeckScreen
 import com.eddiew.commandersim.ui.decks.VariantEditorScreen
 import com.eddiew.commandersim.ui.results.CardDetailScreen
+import com.eddiew.commandersim.ui.results.Metric
+import com.eddiew.commandersim.ui.results.MetricDetailScreen
+import com.eddiew.commandersim.ui.results.MetricNav
+import com.eddiew.commandersim.ui.collection.CollectionScreen
+import com.eddiew.commandersim.ui.settings.SettingsScreen
 import com.eddiew.commandersim.ui.results.DeckReportScreen
 import com.eddiew.commandersim.ui.results.ResultsScreen
 import com.eddiew.commandersim.ui.simulate.SimulateScreen
@@ -58,6 +64,7 @@ private val tabs = listOf(
     Tab("decks", "Decks", Icons.AutoMirrored.Filled.List),
     Tab("simulate", "Simulate", Icons.Filled.PlayArrow),
     Tab("results", "Results", Icons.Filled.Star),
+    Tab("collection", "Collection", Icons.Filled.Favorite),
 )
 
 @Composable
@@ -72,7 +79,7 @@ fun App(vm: AppViewModel = viewModel()) {
         Box(Modifier.fillMaxSize().gridBackground().padding(padding)) {
             NavHost(nav, startDestination = "decks") {
                 composable("decks") {
-                    DecksScreen(vm, onImport = { nav.navigate("import") }, onOpen = { nav.navigate("deck/$it") })
+                    DecksScreen(vm, onImport = { nav.navigate("import") }, onOpen = { nav.navigate("deck/$it") }, onSettings = { nav.navigate("settings") })
                 }
                 composable("import") {
                     ImportDeckScreen(vm, onDone = { nav.popBackStack() })
@@ -96,7 +103,10 @@ fun App(vm: AppViewModel = viewModel()) {
                     SimulateScreen(vm, onFinished = { switchTab(nav, "results") })
                 }
                 composable("results") {
-                    ResultsScreen(vm, onOpenDeck = { nav.navigate("report/$it") }, onSimulate = { switchTab(nav, "simulate") })
+                    ResultsScreen(
+                        vm, onOpenDeck = { nav.navigate("report/$it") }, onSimulate = { switchTab(nav, "simulate") },
+                        onGames = { nav.navigate("metric/_/${Metric.GAMES.name}") },
+                    )
                 }
                 composable("report/{deckId}") { back ->
                     val deckId = back.arguments?.getString("deckId") ?: ""
@@ -104,7 +114,27 @@ fun App(vm: AppViewModel = viewModel()) {
                         vm, deckId,
                         onBack = { nav.popBackStack() },
                         onCard = { name -> nav.navigate("card/$deckId/${Uri.encode(name)}") },
+                        onMetric = { m -> nav.navigate("metric/$deckId/${m.name}") },
                     )
+                }
+                composable("metric/{deckId}/{metric}") { back ->
+                    val deckId = back.arguments?.getString("deckId") ?: ""
+                    val metric = runCatching { Metric.valueOf(back.arguments?.getString("metric") ?: "") }.getOrDefault(Metric.WIN_RATE)
+                    MetricDetailScreen(
+                        vm, deckId, metric,
+                        onBack = { nav.popBackStack() },
+                        nav = MetricNav(
+                            metric = { m -> nav.navigate("metric/$deckId/${m.name}") },
+                            card = { name -> nav.navigate("card/$deckId/${Uri.encode(name)}") },
+                            deck = { id -> nav.navigate(if (metric == Metric.GAMES) "report/$id" else "metric/$id/${metric.name}") },
+                        ),
+                    )
+                }
+                composable("collection") {
+                    CollectionScreen(vm, onOpenDeck = { nav.navigate("deck/$it") })
+                }
+                composable("settings") {
+                    SettingsScreen(vm, onBack = { nav.popBackStack() })
                 }
                 composable("card/{deckId}/{name}") { back ->
                     CardDetailScreen(

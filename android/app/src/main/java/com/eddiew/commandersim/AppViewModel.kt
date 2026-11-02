@@ -75,6 +75,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
 
     val decks = decksRepo.decks
     val report = reportRepo.report
+    val history = decksRepo.history
 
     private val _sim = MutableStateFlow<SimState>(SimState.Idle)
     val sim: StateFlow<SimState> = _sim.asStateFlow()
@@ -167,7 +168,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         return cards.filter { c -> info[c.name.lowercase()]?.canBeCommander == true }.map { it.name }
     }
 
-    fun saveDeck(name: String, preview: ImportPreview, commanderNames: List<String>): String {
+    fun saveDeck(name: String, preview: ImportPreview, commanderNames: List<String>, owned: Boolean = false): String {
         val chosen = commanderNames.map { it.lowercase() }.toSet()
         val all = preview.commanders + preview.cards
         val commanders = if (chosen.isEmpty()) preview.commanders else all.filter { it.name.lowercase() in chosen }
@@ -180,9 +181,12 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
             createdAt = System.currentTimeMillis(),
             enriched = all.all { it.typeLine != null },
             sourceUrl = preview.sourceUrl,
+            owned = owned,
+            syncedAt = if (preview.sourceUrl != null) System.currentTimeMillis() else null,
         )
         viewModelScope.launch {
             decksRepo.upsert(deck)
+            decksRepo.snapshot(deck, "Imported")
             updateSettings { it.copy(pool = it.pool + deck.id) }
             if (!deck.enriched) enrich(deck)
         }
@@ -243,6 +247,96 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
                 s.copy(pool = s.pool - id, aId = s.aId?.takeIf { it != id }, bId = s.bId?.takeIf { it != id })
             }
         }
+    }
+
+    fun setOwned(deckId: String, owned: Boolean) {
+        val d = decks.value.firstOrNull { it.id == deckId } ?: return
+        viewModelScope.launch { decksRepo.upsert(d.copy(owned = owned)) }
+    }
+
+    // ───────────────────────────── Link sync & versions ─────────────────────────────
+
+    data class SyncResult(val deckName: String, val changed: Boolean, val added: Int, val removed: Int, val error: String? = null) {
+        val message: String
+            get() = when {
+                error != null -> "$deckName: $error"
+                !changed -> "$deckName: already up to date"
+                else -> "$deckName: updated (+$added / −$removed cards). The old list is saved in Versions."
+            }
+    }
+
+    /** Re-imports a deck from its link. The current list is saved as a version first, so it can be restored. */
+    suspend fun syncDeck(deckId: String): SyncResult {
+        val d = decks.value.firstOrNull { it.id == deckId } ?: return SyncResult("Deck", false, 0, 0, "not found")
+        val url = d.sourceUrl ?: return SyncResult(d.name, false, 0, 0, "wasn't imported from a link")
+        _syncing.update { it + d.id }
+        try {
+            val p = resolveImport(url)
+            if (p.cards.isEmpty()) return SyncResult(d.name, false, 0, 0, "the link returned an empty deck")
+            // Keep the current commander if the source doesn't say which card it is.
+            val all = p.commanders + p.cards
+            val commanders = p.commanders.ifEmpty {
+                all.filter { c -> d.commanders.any { it.name.equals(c.name, ignoreCase = true) } }
+            }
+            val cards = all.filterNot { c -> commanders.any { it.name.equals(c.name, ignoreCase = true) } }
+            val updated = d.copy(
+                commanders = commanders.map { it.copy(quantity = 1) }.ifEmpty { d.commanders },
+                cards = cards,
+                syncedAt = System.currentTimeMillis(),
+                enriched = (commanders + cards).all { it.typeLine != null },
+            )
+            val diff = com.eddiew.commandersim.data.model.diffDecks(d, updated)
+            val changed = diff.added.isNotEmpty() || diff.removed.isNotEmpty()
+            if (changed) decksRepo.snapshot(d, "Before sync")
+            decksRepo.upsert(if (changed) updated else d.copy(syncedAt = updated.syncedAt))
+            if (changed && !updated.enriched) enrich(updated)
+            return SyncResult(d.name, changed, diff.added.sumOf { it.quantity }, diff.removed.sumOf { it.quantity })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return SyncResult(d.name, false, 0, 0, e.message ?: "sync failed")
+        } finally {
+            _syncing.update { it - d.id }
+        }
+    }
+
+    suspend fun syncAllLinked(): List<SyncResult> =
+        decks.value.filter { it.sourceUrl != null }.map { syncDeck(it.id) }
+
+    /** Switches a deck back to a saved version; the current list is saved as a version first. */
+    fun restoreVersion(deckId: String, versionId: String) {
+        val d = decks.value.firstOrNull { it.id == deckId } ?: return
+        val v = history.value[deckId]?.firstOrNull { it.versionId == versionId } ?: return
+        viewModelScope.launch {
+            decksRepo.snapshot(d, "Before restoring version")
+            decksRepo.upsert(v.asDeck(d))
+        }
+    }
+
+    // ───────────────────────────── Backup & restore ─────────────────────────────
+
+    fun backupJson(appVersion: String): String = com.eddiew.commandersim.data.BackupCodec.encode(
+        com.eddiew.commandersim.data.BackupFile(
+            appVersion = appVersion,
+            exportedAt = System.currentTimeMillis(),
+            decks = decks.value,
+            history = history.value,
+            settings = _settings.value,
+            report = report.value,
+        ),
+    )
+
+    /** Returns a message for the user. */
+    suspend fun restoreBackup(json: String, replace: Boolean): String {
+        val b = com.eddiew.commandersim.data.BackupCodec.decode(json)
+        val merged = com.eddiew.commandersim.data.BackupCodec.merge(decks.value, history.value, b, replace)
+        decksRepo.replaceAll(merged.decks, merged.history)
+        val ids = merged.decks.map { it.id }.toSet()
+        val s = (if (replace) b.settings else null) ?: _settings.value
+        updateSettings { s.copy(pool = (s.pool + if (replace) emptySet() else b.decks.map { it.id }) intersect ids) }
+        if (b.report != null && (replace || report.value == null)) reportRepo.save(b.report)
+        return if (replace) "Restored ${merged.decks.size} decks from the backup."
+        else "Merged backup: ${merged.added} decks added, ${merged.updated} updated."
     }
 
     // ───────────────────────────── Simulation settings ─────────────────────────────
