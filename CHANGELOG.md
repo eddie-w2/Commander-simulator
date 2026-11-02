@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.05
+- **Runs keep going in the background.** A simulation now runs in a foreground service (with a progress notification and a wake lock), so switching apps or turning the screen off no longer stops it. Leaving the app's screen doesn't stop it either.
+- **Nothing is lost if a run dies.**
+  - Forge runs save every finished game as they go.
+  - If the app is killed or the engine keeps failing, the finished games become a partial result in the run history.
+  - Simulate → **Resume** plays only the games that are left, with the same decks and schedule, so the finished run matches an uninterrupted one.
+  - Stopping early also leaves the run resumable.
+- **Run history:** every run is saved. Results has a drop-down of past runs, newest first. Each run shows its engine, games and decks, and is marked if partial. Runs can be deleted.
+- **Deck test record:** a deck's screen shows how it has done across all saved runs:
+  - win rate with its margin of error, games, wins and average place
+  - how it compares to an average deck at that table size
+  - results by engine and a win-rate-by-run trend
+  - win rate when each opponent was at the table
+  - the list of runs, each opening that run's deck report
+- **Pool:** All / None buttons on the pool. Decks imported from a Moxfield profile are no longer added to the pool.
+- **Startup checks:** the app checks for an app update and a new Forge engine every time it opens, and offers to install either one (app update first).
+
 ## v0.3.04
 - **Card categories:** every deck's cards are sorted automatically into ramp, card draw, removal, board wipes, counterspells, protection, tutors, recursion, token makers, burn/drain and lifegain. A card can fall into several. Categories come from Scryfall tags and rules text.
   - The deck screen has a category radar plus a count for each category, coloured against a common guideline (~10 ramp, ~10 draw, ~8 removal, ~3 wipes).

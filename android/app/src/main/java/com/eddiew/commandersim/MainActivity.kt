@@ -6,6 +6,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -89,6 +93,22 @@ fun App(vm: AppViewModel = viewModel()) {
     var cardPopup by remember { mutableStateOf<String?>(null) }
     val packOffer by vm.packOffer.collectAsStateWithLifecycle()
     val packDismissed by vm.packPromptDismissed.collectAsStateWithLifecycle()
+    val appUpdate by vm.update.collectAsStateWithLifecycle()
+    val updateDismissed by vm.updatePromptDismissed.collectAsStateWithLifecycle()
+    var updateProgress by remember { mutableStateOf<Float?>(null) }
+    val sim by vm.sim.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Ask once for notification permission when a run starts, so its progress shows while the app is in the background.
+    val notifPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) {}
+    val isRunning = sim is com.eddiew.commandersim.SimState.Running
+    androidx.compose.runtime.LaunchedEffect(isRunning) {
+        if (isRunning && android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) runCatching { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
+    }
     val scope = rememberCoroutineScope()
     CompositionLocalProvider(LocalCardInfo provides { name -> cardPopup = name }) {
     Scaffold(
@@ -115,6 +135,10 @@ fun App(vm: AppViewModel = viewModel()) {
                         onBack = { nav.popBackStack() },
                         onVariant = { nav.navigate("variant/$it") },
                         onRunAb = { switchTab(nav, "simulate") },
+                        onOpenRun = { runId ->
+                            val deckId = back.arguments?.getString("id") ?: ""
+                            scope.launch { if (vm.openRun(runId)) nav.navigate("report/$deckId") }
+                        },
                     )
                 }
                 composable("variant/{id}") { back ->
@@ -177,8 +201,41 @@ fun App(vm: AppViewModel = viewModel()) {
     }
     }
     cardPopup?.let { name -> CardInfoDialog(name, vm::cardInfo) { cardPopup = null } }
+    val rel = appUpdate
+    if (rel != null && !updateDismissed) {
+        AlertDialog(
+            onDismissRequest = { if (updateProgress == null) vm.dismissUpdatePrompt() },
+            containerColor = Hud.SurfaceHi,
+            title = { Text("App update available", color = Hud.Text) },
+            text = {
+                Column {
+                    Text("Version ${rel.version} is out (you have ${vm.updater.currentVersion}). Download and install it now?", color = Hud.Muted)
+                    updateProgress?.let {
+                        Spacer(Modifier.height(10.dp))
+                        com.eddiew.commandersim.ui.components.NeonBar(it, color = Hud.Cyan)
+                        Text("Downloading… ${(it * 100).toInt()}%", color = Hud.Dim, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = updateProgress == null, onClick = {
+                    updateProgress = 0f
+                    scope.launch {
+                        runCatching {
+                            val f = vm.updater.download(rel) { updateProgress = it }
+                            if (vm.updater.canInstall()) vm.updater.install(f) else vm.updater.openInstallPermissionSettings()
+                        }
+                        updateProgress = null
+                        vm.dismissUpdatePrompt()
+                    }
+                }) { Text("UPDATE", color = Hud.Cyan) }
+            },
+            dismissButton = { TextButton(onClick = { vm.dismissUpdatePrompt() }, enabled = updateProgress == null) { Text("LATER", color = Hud.Muted) } },
+        )
+    }
     val offer = packOffer
-    if (offer != null && !packDismissed) {
+    // One prompt at a time: the app update comes first.
+    if (offer != null && !packDismissed && (rel == null || updateDismissed)) {
         AlertDialog(
             onDismissRequest = { vm.dismissPackPrompt() },
             containerColor = Hud.SurfaceHi,

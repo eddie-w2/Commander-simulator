@@ -91,25 +91,146 @@ class DeckRepository(private val dir: File) {
     }
 }
 
-class ReportRepository(private val dir: File) {
-    private val file get() = File(dir, "latest_report.json")
+/** One deck's line in a saved run, for history lists and cumulative deck stats. */
+@kotlinx.serialization.Serializable
+data class DeckRunStat(
+    val deckId: String,
+    val name: String,
+    val games: Int,
+    val wins: Int,
+    val avgPlace: Double,
+    val avgDamage: Double,
+    /** "A" / "B" in an A/B run. */
+    val abSide: String? = null,
+    /** Per opponent: games together and wins. */
+    val vs: List<VsStat> = emptyList(),
+)
+
+@kotlinx.serialization.Serializable
+data class VsStat(val opponentId: String, val name: String, val games: Int, val wins: Int)
+
+/** Index entry for a saved run. The full report is in its own file. */
+@kotlinx.serialization.Serializable
+data class RunSummary(
+    val id: String,
+    val createdAt: Long,
+    val source: String,
+    val ab: Boolean,
+    val games: Int,
+    val plannedGames: Int,
+    val decks: List<DeckRunStat>,
+    val avgTurns: Double = 0.0,
+) {
+    val partial: Boolean get() = plannedGames > 0 && games < plannedGames
+    val engineLabel: String get() = when (source) { "forge" -> "Forge"; "quick" -> "Quick model"; else -> "Sample" }
+
+    companion object {
+        fun of(r: SimulationReport): RunSummary = RunSummary(
+            id = r.id, createdAt = r.createdAt, source = r.source, ab = r.ab != null,
+            games = r.meta.games, plannedGames = r.plannedGames, avgTurns = r.meta.avgTurns,
+            decks = r.decks.map { d ->
+                DeckRunStat(
+                    deckId = d.deckId, name = d.name, games = d.outcome.games, wins = d.outcome.wins,
+                    avgPlace = d.outcome.avgPlace, avgDamage = d.damage.avgDealtToPlayers, abSide = d.abSide,
+                    vs = r.matchups.filter { it.deckId == d.deckId && it.gamesTogether > 0 }.map { m ->
+                        VsStat(m.opponentId, r.name(m.opponentId), m.gamesTogether, Math.round(m.winRate * m.gamesTogether).toInt())
+                    },
+                )
+            },
+        )
+    }
+}
+
+/**
+ * Every finished (or partial) run, newest first. Reports are kept one file each under reports/, with a small index;
+ * only the selected report is loaded.
+ */
+class ReportRepository(private val root: File) {
+    private val dir get() = File(root, "reports")
+    private val indexFile get() = File(dir, "index.json")
+    private val legacyFile get() = File(root, "latest_report.json")
+    private val mutex = Mutex()
+    private val indexSer = ListSerializer(RunSummary.serializer())
+
+    private val _runs = MutableStateFlow<List<RunSummary>>(emptyList())
+    /** Saved runs, most recent first. */
+    val runs: StateFlow<List<RunSummary>> = _runs.asStateFlow()
     private val _report = MutableStateFlow<SimulationReport?>(null)
+    /** The run being viewed. */
     val report: StateFlow<SimulationReport?> = _report.asStateFlow()
 
+    private fun file(id: String) = File(dir, "$id.json")
+
     suspend fun load() = withContext(Dispatchers.IO) {
-        _report.value = runCatching {
-            if (file.exists()) AppJson.decodeFromString(SimulationReport.serializer(), file.readText()) else null
-        }.getOrNull()
+        mutex.withLock {
+            dir.mkdirs()
+            var index = runCatching { AppJson.decodeFromString(indexSer, indexFile.readText()) }.getOrNull()
+            if (index == null) {
+                // Rebuild from the report files (first launch of v0.3.05, or a lost index).
+                index = dir.listFiles { f -> f.name.endsWith(".json") && f.name != "index.json" }.orEmpty().mapNotNull { f ->
+                    runCatching { RunSummary.of(AppJson.decodeFromString(SimulationReport.serializer(), f.readText())) }.getOrNull()
+                }
+            }
+            // Bring the single report kept by older versions into the history.
+            if (legacyFile.exists()) {
+                runCatching {
+                    val r = AppJson.decodeFromString(SimulationReport.serializer(), legacyFile.readText())
+                    file(r.id).writeText(legacyFile.readText())
+                    index = index!!.filterNot { it.id == r.id } + RunSummary.of(r)
+                }
+                legacyFile.delete()
+            }
+            val sorted = index!!.sortedByDescending { it.createdAt }
+            writeIndex(sorted)
+            _runs.value = sorted
+        }
+        sorted0()?.let { select(it.id) }
     }
 
-    suspend fun save(report: SimulationReport) = withContext(Dispatchers.IO) {
-        _report.value = report
+    private fun sorted0() = _runs.value.firstOrNull()
+
+    private fun writeIndex(list: List<RunSummary>) {
         dir.mkdirs()
-        file.writeText(AppJson.encodeToString(SimulationReport.serializer(), report))
+        indexFile.writeText(AppJson.encodeToString(indexSer, list))
     }
 
+    /** Saves (or replaces, same id) a run and shows it. */
+    suspend fun save(report: SimulationReport) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            dir.mkdirs()
+            file(report.id).writeText(AppJson.encodeToString(SimulationReport.serializer(), report))
+            val list = (_runs.value.filterNot { it.id == report.id } + RunSummary.of(report)).sortedByDescending { it.createdAt }
+            writeIndex(list)
+            _runs.value = list
+            _report.value = report
+        }
+    }
+
+    /** Shows a saved run. Returns false if its file is gone. */
+    suspend fun select(id: String): Boolean = withContext(Dispatchers.IO) {
+        if (_report.value?.id == id) return@withContext true
+        val r = runCatching { AppJson.decodeFromString(SimulationReport.serializer(), file(id).readText()) }.getOrNull()
+        if (r != null) _report.value = r
+        r != null
+    }
+
+    suspend fun delete(id: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            file(id).delete()
+            val list = _runs.value.filterNot { it.id == id }
+            writeIndex(list)
+            _runs.value = list
+            if (_report.value?.id == id) _report.value = null
+        }
+        sorted0()?.let { if (_report.value == null) select(it.id) }
+    }
+
+    /** Removes every saved run. */
     suspend fun clear() = withContext(Dispatchers.IO) {
-        _report.value = null
-        file.delete()
+        mutex.withLock {
+            dir.listFiles().orEmpty().forEach { it.delete() }
+            _runs.value = emptyList()
+            _report.value = null
+        }
     }
 }

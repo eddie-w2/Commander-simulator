@@ -39,9 +39,16 @@ class SampleSimulator internal constructor(
     private val source: String,
     /** Extra notes for the report, read after the run (e.g. cards the engine didn't know). */
     private val notes: () -> List<String> = { emptyList() },
+    /** Report id; a resumed run keeps its id so the finished report replaces the partial one. */
+    private val reportId: String = UUID.randomUUID().toString(),
+    /** Games already played by an earlier, interrupted run with the same seed and decks (job index → result). */
+    private val resumed: Map<Int, GameResult> = emptyMap(),
+    /** Called on the collecting coroutine after each newly played game (used to checkpoint). */
+    private val onGame: (Int, GameResult) -> Unit = { _, _ -> },
 ) : SimulationService {
 
-    constructor(seed: Long = System.currentTimeMillis()) : this(seed, QuickGamePlayer(), "quick")
+    constructor(seed: Long = System.currentTimeMillis(), reportId: String = UUID.randomUUID().toString()) :
+        this(seed, QuickGamePlayer(), "quick", { emptyList() }, reportId)
 
     override suspend fun run(config: SimConfig, decks: List<Deck>, control: SimControl, onProgress: (Float) -> Unit): SimulationReport =
         withContext(Dispatchers.Default) {
@@ -56,8 +63,10 @@ class SampleSimulator internal constructor(
         run {
             val byId = decks.associateBy { it.id }
             val pool = config.deckIds.distinct().mapNotNull { byId[it] }
-            control.log("Preparing ${pool.size} decks…")
-            player.prepare((pool + listOfNotNull(config.ab?.let { byId[it.aId] }, config.ab?.let { byId[it.bId] })).distinctBy { it.id }, control)
+            // Nothing will be played (rebuilding a report from saved games): skip the engine start-up.
+            val replayOnly = control.stopRequested
+            control.log(if (replayOnly) "Rebuilding results from ${resumed.size} saved games…" else "Preparing ${pool.size} decks…")
+            if (!replayOnly) player.prepare((pool + listOfNotNull(config.ab?.let { byId[it.aId] }, config.ab?.let { byId[it.bId] })).distinctBy { it.id }, control)
             control.log("Playing games…")
             val run = Run(Random(seed), config, control, onProgress)
             val ab = config.ab
@@ -75,10 +84,13 @@ class SampleSimulator internal constructor(
             onProgress(1f)
             require(run.games > 0) { "No games finished." + (run.firstError?.let { " First error: $it" } ?: "") }
             val extra = buildList {
+                if (run.resumedGames > 0 && !replayOnly) add("Resumed: ${run.resumedGames} games came from the interrupted run.")
+                run.abortReason?.let { add("Stopped after repeated failures ($it). Played games are kept; resume from Simulate to finish.") }
                 addAll(notes())
                 if (run.adjudicated > 0) add("${run.adjudicated} of ${run.games} games reached the round limit and were scored on life and board.")
                 if (run.failed > 0) add("${run.failed} games failed and were skipped (${run.firstError}).")
-                if (control.stopRequested) add("Stopped early after ${run.games} games; results are less certain.")
+                if (control.stopRequested && run.abortReason == null && run.games < run.planned)
+                    add("Stopped after ${run.games} of ${run.planned} games; results are less certain.")
             }
             run.report(comparison, ab?.let { listOf(it.aId to "A", it.bId to "B") }?.toMap() ?: emptyMap()).copy(notes = extra)
         }
@@ -102,6 +114,11 @@ class SampleSimulator internal constructor(
 
         var failed = 0
         var firstError: String? = null
+        /** Games planned for this run (A/B counts both versions). */
+        var planned = 0
+        var resumedGames = 0
+        /** Set when the run stopped itself because games kept failing (e.g. the engine process died). */
+        var abortReason: String? = null
 
         /** Adds one finished game to every statistic. */
         fun record(seats: List<Deck>, result: GameResult) {
@@ -132,6 +149,12 @@ class SampleSimulator internal constructor(
          * coroutine, as games finish. Stops taking new games when the user asks to stop.
          */
         suspend fun execute(jobs: List<Job>, onResult: (Int, GameResult) -> Unit) = coroutineScope {
+            planned = jobs.size
+            // Games from an interrupted run count first; only the rest are played.
+            val pre = resumed.filterKeys { it in jobs.indices }.toSortedMap()
+            pre.forEach { (i, r) -> onResult(i, r) }
+            resumedGames = pre.size
+            if (pre.isNotEmpty()) onProgress(pre.size / jobs.size.toFloat())
             val next = AtomicInteger(0)
             val out = Channel<Pair<Int, Result<GameResult>>>(Channel.UNLIMITED)
             val threads = player.parallelism.coerceAtLeast(1)
@@ -140,6 +163,7 @@ class SampleSimulator internal constructor(
                     while (!control.stopRequested) {
                         val i = next.getAndIncrement()
                         if (i >= jobs.size) break
+                        if (i in pre) continue
                         val start = System.nanoTime()
                         val r = runCatching { runInterruptible { player.play(jobs[i].seats, jobs[i].seed) } }
                         if (r.exceptionOrNull() is CancellationException) throw r.exceptionOrNull()!!
@@ -149,13 +173,24 @@ class SampleSimulator internal constructor(
                 }
             }
             launch { workers.joinAll(); out.close() }
-            var done = 0
+            var done = pre.size
+            var failStreak = 0
             for ((i, r) in out) {
                 done++
-                r.onSuccess { onResult(i, it) }.onFailure { e ->
+                r.onSuccess {
+                    failStreak = 0
+                    onResult(i, it)
+                    runCatching { onGame(i, it) }
+                }.onFailure { e ->
                     failed++
+                    failStreak++
                     if (firstError == null) firstError = e.message ?: e.javaClass.simpleName
                     control.log("Game ${i + 1} failed: ${e.message}")
+                    // Every worker failing in a row usually means the engine can't continue: stop and keep what we have.
+                    if (failStreak >= maxOf(3, threads * 2) && abortReason == null) {
+                        abortReason = e.message ?: e.javaClass.simpleName
+                        control.stopRequested = true
+                    }
                 }
                 onProgress(done / jobs.size.toFloat())
             }
@@ -243,7 +278,8 @@ class SampleSimulator internal constructor(
                 c.copy(metrics = abMetrics(a, b))
             }
             return SimulationReport(
-                id = UUID.randomUUID().toString(),
+                id = reportId,
+                plannedGames = planned,
                 createdAt = System.currentTimeMillis(),
                 source = source,
                 config = config,

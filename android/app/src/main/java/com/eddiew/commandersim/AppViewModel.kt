@@ -38,9 +38,12 @@ sealed interface SimState {
         val startedAt: Long = System.currentTimeMillis(),
         val log: List<String> = emptyList(),
         val now: Long = System.currentTimeMillis(),
+        /** Games in this run (0 until known). */
+        val total: Int = 0,
     ) : SimState
     data class Failed(val message: String, val log: List<String> = emptyList()) : SimState
-    data object Done : SimState
+    /** Finished; the report is saved in the run history under [reportId]. */
+    data class Done(val reportId: String) : SimState
 }
 
 @Serializable
@@ -86,8 +89,10 @@ data class ImportPreview(
 class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) {
     constructor(app: Application) : this(app, true)
 
-    private val decksRepo = DeckRepository(app.filesDir)
-    private val reportRepo = ReportRepository(app.filesDir)
+    /** App-wide objects (repositories, Forge workers, the run in progress) that outlive this screen. */
+    private val services = AppServices.get(app)
+    private val decksRepo = services.decks
+    private val reportRepo = services.reports
     private val settingsFile = File(app.filesDir, "settings.json")
     private val scryfall = ScryfallClient()
     private val linkImporter = DeckLinkImporter()
@@ -95,8 +100,8 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     /** Official Commander precons, cached from MTGJSON. */
     val precons = preconRepo.catalog
     /** True when this build includes Forge's engine and card data. */
-    val forgePacks = com.eddiew.commandersim.sim.forge.ForgePacks(app)
-    private val workerPool = com.eddiew.commandersim.sim.forge.AndroidForge.WorkerPool(app)
+    val forgePacks = services.forgePacks
+    private val workerPool = services.workerPool
     /** True when a Forge engine (built in or downloaded) is available. */
     val forgeAvailable: Boolean = runCatching { app.assets.open("forge/bundled.txt").close(); true }.getOrDefault(false)
 
@@ -110,14 +115,17 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     val packPromptDismissed: StateFlow<Boolean> = _packPromptDismissed.asStateFlow()
 
     private val cardInfoCache = com.eddiew.commandersim.data.CardInfoRepository(app.filesDir)
-    private var control: com.eddiew.commandersim.sim.SimControl? = null
 
     val decks = decksRepo.decks
+    /** The run being viewed on the Results tab. */
     val report = reportRepo.report
+    /** Every saved run, most recent first. */
+    val runs = reportRepo.runs
     val history = decksRepo.history
 
-    private val _sim = MutableStateFlow<SimState>(SimState.Idle)
-    val sim: StateFlow<SimState> = _sim.asStateFlow()
+    val sim: StateFlow<SimState> = services.runner.state
+    /** An interrupted or stopped Forge run that can be continued. */
+    val resumable = services.runner.resumable
 
     private val _settings = MutableStateFlow(SimSettings())
     val settings: StateFlow<SimSettings> = _settings.asStateFlow()
@@ -126,12 +134,16 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     private val _syncing = MutableStateFlow<Set<String>>(emptySet())
     val syncing: StateFlow<Set<String>> = _syncing.asStateFlow()
 
-    private var simJob: Job? = null
 
     val updater = com.eddiew.commandersim.data.Updater(app)
     private val _update = MutableStateFlow<com.eddiew.commandersim.data.Updater.Release?>(null)
     /** A newer release on GitHub, if one was found. */
     val update: StateFlow<com.eddiew.commandersim.data.Updater.Release?> = _update.asStateFlow()
+
+    private val _updatePromptDismissed = MutableStateFlow(false)
+    /** True once the user has answered this launch's app update prompt. */
+    val updatePromptDismissed: StateFlow<Boolean> = _updatePromptDismissed.asStateFlow()
+    fun dismissUpdatePrompt() { _updatePromptDismissed.value = true }
 
     /** Returns the newer release, or null if up to date. Throws on network errors. */
     suspend fun checkForUpdate(): com.eddiew.commandersim.data.Updater.Release? =
@@ -150,6 +162,8 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         if (autoLoad) viewModelScope.launch {
             decksRepo.load()
             reportRepo.load()
+            // A Forge run cut off by the app being killed: keep its finished games and offer to resume.
+            launch { runCatching { services.runner.recover() } }
             // Bring decks imported before the current card data level up to date, one at a time.
             launch {
                 for (d in decksRepo.decks.value.filter { it.dataLevel < com.eddiew.commandersim.data.model.CARD_DATA_LEVEL }) enrich(d)
@@ -229,7 +243,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         return cards.filter { c -> info[c.name.lowercase()]?.canBeCommander == true }.map { it.name }
     }
 
-    fun saveDeck(name: String, preview: ImportPreview, commanderNames: List<String>, owned: Boolean = false): String {
+    fun saveDeck(name: String, preview: ImportPreview, commanderNames: List<String>, owned: Boolean = false, addToPool: Boolean = true): String {
         val chosen = commanderNames.map { it.lowercase() }.toSet()
         val all = preview.commanders + preview.cards
         val commanders = if (chosen.isEmpty()) preview.commanders else all.filter { it.name.lowercase() in chosen }
@@ -248,7 +262,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         viewModelScope.launch {
             decksRepo.upsert(deck)
             decksRepo.snapshot(deck, "Imported")
-            updateSettings { it.copy(pool = it.pool + deck.id) }
+            if (addToPool) updateSettings { it.copy(pool = it.pool + deck.id) }
             enrich(deck)
         }
         return deck.id
@@ -460,7 +474,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
             try {
                 val preview = resolveImport(d.url)
                 if (preview.cards.isEmpty()) error("empty deck")
-                saveDeck(d.name, preview, emptyList(), owned)
+                saveDeck(d.name, preview, emptyList(), owned, addToPool = false)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -488,7 +502,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         return try {
             val p = forgePacks.download(offer) { _packProgress.value = it }
             _packOffer.value = null
-            workerPool.close() // workers reload with the new engine on the next run
+            if (!services.runner.isRunning) workerPool.close() // workers reload with the new engine on the next run
             "Now using ${p.manifest.label}."
         } catch (e: CancellationException) {
             throw e
@@ -501,7 +515,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
 
     fun selectForgePack(id: String) {
         forgePacks.select(id)
-        workerPool.close()
+        if (!services.runner.isRunning) workerPool.close()
     }
 
     fun setForgeWorkers(n: Int) = updateSettings { it.copy(forgeWorkers = n.coerceIn(1, 4)) }
@@ -511,7 +525,8 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     suspend fun cardInfo(name: String): com.eddiew.commandersim.data.CardInfo = cardInfoCache.get(name)
 
     override fun onCleared() {
-        workerPool.close()
+        // A run in progress keeps its workers; otherwise free their memory.
+        if (!services.runner.isRunning) workerPool.close()
         super.onCleared()
     }
 
@@ -519,6 +534,14 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
 
     fun togglePool(deckId: String) = updateSettings { s ->
         s.copy(pool = if (deckId in s.pool) s.pool - deckId else s.pool + deckId)
+    }
+
+    /** Empties the pool. */
+    fun clearPool() = updateSettings { it.copy(pool = emptySet()) }
+
+    /** Puts every deck (or every owned deck) in the pool. */
+    fun selectAllPool(ownedOnly: Boolean = false) = updateSettings { s ->
+        s.copy(pool = decks.value.filter { !ownedOnly || it.owned }.map { it.id }.toSet())
     }
 
     fun setMode(mode: SimMode) = updateSettings { it.copy(mode = mode) }
@@ -534,7 +557,8 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         it.copy(mode = SimMode.AB, aId = aId, bId = bId)
     }
 
-    fun runSimulation(onDone: () -> Unit) {
+    /** Starts a run. It continues in the background (foreground service); the screen follows [sim]. */
+    fun runSimulation() {
         val s = _settings.value
         val ids = decks.value.map { it.id }.toSet()
         val ab = if (s.mode == SimMode.AB && s.aId in ids && s.bId in ids) AbConfig(s.aId!!, s.bId!!) else null
@@ -544,53 +568,34 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
             seatRotation = s.seatRotation,
             ab = ab,
         )
-        val useForge = s.engine == SimEngine.FORGE && forgeAvailable
-        val simulator: SimulationService =
-            if (useForge) com.eddiew.commandersim.sim.forge.AndroidForge.simulator(
-                getApplication<Application>(), forgePacks, workerPool,
-                com.eddiew.commandersim.sim.forge.ForgeOptions(workers = s.forgeWorkers),
-            ) else SampleSimulator()
-        val ctl = com.eddiew.commandersim.sim.SimControl().also { control = it }
-        simJob?.cancel()
-        simJob = viewModelScope.launch {
-            val started = System.currentTimeMillis()
-            var progress = 0f
-            fun snapshot() = SimState.Running(progress, ctl.status, started, ctl.logLines())
-            _sim.value = snapshot()
-            // Forge games are long; refresh the status line every second, not just between games.
-            val ticker = launch {
-                while (true) {
-                    kotlinx.coroutines.delay(1000)
-                    if (_sim.value is SimState.Running) _sim.value = snapshot()
-                }
-            }
-            try {
-                val report = simulator.run(config, decks.value, ctl) { p -> progress = p; _sim.value = snapshot() }
-                ticker.cancel()
-                reportRepo.save(report)
-                _sim.value = SimState.Done
-                onDone()
-            } catch (e: CancellationException) {
-                ticker.cancel()
-                _sim.value = SimState.Idle
-                throw e
-            } catch (e: Throwable) {
-                ticker.cancel()
-                ctl.log("Failed: ${e.javaClass.simpleName}: ${e.message}")
-                e.stackTrace.take(6).forEach { ctl.log("   at $it") }
-                _sim.value = SimState.Failed("${e.javaClass.simpleName}: ${e.message ?: "simulation failed"}", ctl.logLines())
-            }
+        services.runner.start(config, decks.value, forge = s.engine == SimEngine.FORGE && forgeAvailable, forgeWorkers = s.forgeWorkers)
+    }
+
+    /** Continues the interrupted run: saved games are kept, only the rest are played. */
+    fun resumeRun() = services.runner.resume()
+
+    /** Forgets the interrupted run's checkpoint; its partial results stay in the history. */
+    fun discardResumable() = services.runner.discardResumable()
+
+    fun cancelSimulation() = services.runner.cancel()
+
+    /** Clears a finished or failed run's state (after showing it). */
+    fun acknowledgeRun() = services.runner.acknowledge()
+
+    // ───────────────────────────── Run history ─────────────────────────────
+
+    fun selectRun(id: String) { viewModelScope.launch { reportRepo.select(id) } }
+
+    /** Selects a run and returns once it's loaded (false if its file is missing). */
+    suspend fun openRun(id: String): Boolean = reportRepo.select(id)
+
+    fun deleteRun(id: String) {
+        viewModelScope.launch {
+            if (resumable.value?.id == id) services.runner.discardResumable()
+            reportRepo.delete(id)
         }
     }
 
-    fun cancelSimulation() {
-        simJob?.cancel()
-        _sim.value = SimState.Idle
-    }
-
     /** Stops after the current game and builds results from the games played so far. */
-    fun stopEarly() {
-        control?.stopRequested = true
-        control?.log("Stopping after the current game…")
-    }
+    fun stopEarly() = services.runner.stopEarly()
 }

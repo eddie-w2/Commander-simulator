@@ -32,9 +32,15 @@ object AndroidForge {
     const val MAX_WORKERS = 4
 
     /** A simulator that plays every game with Forge's rules engine and AI, in [ForgeOptions.workers] processes. */
-    fun simulator(context: Context, packs: ForgePacks, pool: WorkerPool, options: ForgeOptions, seed: Long = System.currentTimeMillis()): SimulationService {
+    fun simulator(
+        context: Context, packs: ForgePacks, pool: WorkerPool, options: ForgeOptions,
+        seed: Long = System.currentTimeMillis(),
+        reportId: String = java.util.UUID.randomUUID().toString(),
+        resumed: Map<Int, GameResult> = emptyMap(),
+        onGame: (Int, GameResult) -> Unit = { _, _ -> },
+    ): SampleSimulator {
         val player = ForgeWorkersPlayer(context.applicationContext, packs, pool, options)
-        return SampleSimulator(seed, player, "forge") { player.notes() }
+        return SampleSimulator(seed, player, "forge", { player.notes() }, reportId, resumed, onGame)
     }
 
     /** One bound worker process. */
@@ -158,7 +164,8 @@ object AndroidForge {
             val ids = seats.map { it.id }.toTypedArray()
             var attempt = 0
             while (true) {
-                val w = idle.take()
+                // Don't wait forever if every worker has died.
+                val w = idle.poll(15, TimeUnit.MINUTES) ?: error("No Forge worker is available")
                 try {
                     val api = w.api ?: throw DeadObjectException()
                     val reply: WorkerReply = api.play(ids, seed, options.maxRounds, options.maxMillisPerGame).fromBytes()
@@ -185,7 +192,7 @@ object AndroidForge {
         }
 
         fun notes(): List<String> = listOfNotNull(
-            "Played with the Forge rules engine and Forge AI ($packLabel).",
+            "Played with the Forge rules engine and Forge AI" + (if (packLabel.isBlank()) "." else " ($packLabel)."),
             if (missing.isEmpty()) null
             else "Forge doesn't know ${missing.size} card${if (missing.size > 1) "s" else ""}, so they were left out: " +
                 missing.take(12).joinToString(", ") + if (missing.size > 12) "…" else "",

@@ -1,5 +1,15 @@
 package com.eddiew.commandersim.ui.results
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -46,12 +56,27 @@ import java.util.Date
 @Composable
 fun ResultsScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit, onSimulate: () -> Unit, onGames: () -> Unit) {
     val report by vm.report.collectAsStateWithLifecycle()
+    val runs by vm.runs.collectAsStateWithLifecycle()
+    val resumable by vm.resumable.collectAsStateWithLifecycle()
     val r = report
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(
             if (r?.ab != null) "A/B results" else "Results",
             r?.let { "${"%,d".format(it.meta.games)} games · " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it.createdAt)) },
         )
+        if (runs.isNotEmpty()) {
+            RunSelector(runs, r?.id, onSelect = vm::selectRun, onDelete = vm::deleteRun, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp))
+        }
+        if (r != null && r.partial) {
+            Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp)) {
+                Notice("Partial run: ${r.meta.games} of ${r.plannedGames} games." +
+                    if (resumable?.id == r.id) " Resume it from the Simulate tab to play the rest." else "")
+                if (resumable?.id == r.id) {
+                    Spacer(Modifier.height(6.dp))
+                    HudButton("▶ Resume this run", { vm.resumeRun(); onSimulate() }, Modifier.fillMaxWidth())
+                }
+            }
+        }
         if (r == null) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HudPanel(title = "No results yet") {
@@ -195,3 +220,65 @@ internal fun RankRow(rank: Int, d: DeckReport, scaleMax: Double, highlight: Bool
         }
     }
 }
+
+/** Drop-down of saved runs (most recent first), with delete for the selected one. */
+@Composable
+private fun RunSelector(
+    runs: List<com.eddiew.commandersim.data.RunSummary>,
+    selected: String?,
+    onSelect: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var open by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val current = runs.firstOrNull { it.id == selected }
+    val fmt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+    fun title(run: com.eddiew.commandersim.data.RunSummary) =
+        "${fmt.format(Date(run.createdAt))} · ${run.engineLabel}" + (if (run.ab) " · A/B" else "") + if (run.partial) " · partial" else ""
+    fun sub(run: com.eddiew.commandersim.data.RunSummary) =
+        "${"%,d".format(run.games)} games · " + run.decks.joinToString(", ") { (it.abSide?.let { s -> "$s: " } ?: "") + it.name }
+
+    Box(modifier.fillMaxWidth()) {
+        HudPanel(onClick = { open = true }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("RUN ${runs.indexOfFirst { it.id == selected }.let { if (it < 0) "—" else "${runs.size - it}" }} OF ${runs.size}",
+                        style = MaterialTheme.typography.labelSmall, color = Hud.Electric)
+                    Text(current?.let(::title) ?: "Choose a run", style = MaterialTheme.typography.bodyMedium, color = Hud.Text,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    current?.let { Text(sub(it), style = MaterialTheme.typography.labelSmall, color = Hud.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+                if (current != null) {
+                    Text("✕", color = Hud.Muted, modifier = Modifier.padding(horizontal = 8.dp).clickable { confirmDelete = true })
+                }
+                Text("▾", color = Hud.Cyan)
+            }
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }, modifier = Modifier.background(Hud.SurfaceHi)) {
+            runs.forEachIndexed { i, run ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text("#${runs.size - i}  " + title(run), style = MaterialTheme.typography.bodySmall,
+                                color = if (run.id == selected) Hud.Cyan else Hud.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(sub(run), style = MaterialTheme.typography.labelSmall, color = Hud.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    onClick = { open = false; onSelect(run.id) },
+                )
+            }
+        }
+    }
+    if (confirmDelete && current != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            containerColor = Hud.SurfaceHi,
+            title = { Text("Delete this run?", color = Hud.Text) },
+            text = { Text("${title(current)}\n${sub(current)}\n\nIts results are removed from the history and from each deck's test record.", color = Hud.Muted) },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete(current.id) }) { Text("DELETE", color = Hud.Negative) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("CANCEL", color = Hud.Muted) } },
+        )
+    }
+}
+

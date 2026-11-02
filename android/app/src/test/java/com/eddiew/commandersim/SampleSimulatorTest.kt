@@ -5,8 +5,10 @@ import com.eddiew.commandersim.data.model.Deck
 import com.eddiew.commandersim.data.model.DeckCard
 import com.eddiew.commandersim.data.model.SimConfig
 import com.eddiew.commandersim.sim.SampleSimulator
+import com.eddiew.commandersim.sim.QuickGamePlayer
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -104,4 +106,33 @@ class SampleSimulatorTest {
         assertTrue(lo in 0.17..0.18)
         assertTrue(hi in 0.33..0.35)
     }
+
+    @Test
+    fun `resuming from saved games gives the same results as an uninterrupted run`() = runTest {
+        val config = SimConfig(deckIds = decks.map { it.id }, gamesPerDeck = 40)
+        val saved = java.util.TreeMap<Int, com.eddiew.commandersim.sim.GameResult>()
+        val full = SampleSimulator(seed = 11).run(config, decks) {}
+        // Same seed, recording each game as it finishes (the checkpoint).
+        SampleSimulator(11L, QuickGamePlayer(), "quick", { emptyList() }, "run-1", emptyMap()) { i, r -> synchronized(saved) { saved[i] = r } }
+            .run(config, decks) {}
+        assertEquals(full.meta.games, saved.size)
+        val half = saved.headMap(saved.size / 2)
+
+        // Rebuild a partial report from the first half only (app killed mid-run).
+        val ctl = com.eddiew.commandersim.sim.SimControl().apply { stopRequested = true }
+        val partial = replay(11L, half).run(config, decks, ctl) {}
+        assertEquals(half.size, partial.meta.games)
+        assertEquals(full.meta.games, partial.plannedGames)
+        assertTrue(partial.partial)
+
+        // Resume: the saved half is reused, the rest is played; totals match the uninterrupted run.
+        val resumed = replay(11L, half).run(config, decks) {}
+        assertEquals(full.meta.games, resumed.meta.games)
+        assertFalse(resumed.partial)
+        for (d in full.decks) assertEquals(d.outcome.wins, resumed.deck(d.deckId)!!.outcome.wins)
+    }
+
+    private fun replay(seed: Long, games: Map<Int, com.eddiew.commandersim.sim.GameResult>) =
+        SampleSimulator(seed, QuickGamePlayer(), "quick", { emptyList() }, "run-1", games)
 }
+

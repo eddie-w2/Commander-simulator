@@ -13,6 +13,7 @@ Kotlin + Jetpack Compose, dark grey / electric blue HUD theme.
 - **Precons:** every official Commander precon (from [MTGJSON](https://mtgjson.com)), synced and cached on the phone, added in one tap.
 - **Decks:** paste a Moxfield/Archidekt link or a deck list in any text format. The commander is detected automatically (a card listed on its own for 99+1 / 98+2, a Commander section, or the only legendary card covering the deck's colours). Card data comes from Scryfall.
 - **Simulate:** *Deck pool* mode runs every selected deck against the others in balanced 4-player pods. *A/B test* mode compares two versions of a deck (make one with **Create variant** on a deck) on identical games.
+- **Run history:** every run is saved (newest first in the Results drop-down); runs continue in the background and Forge runs can resume after an interruption. Each deck screen shows its record across all runs.
 - **Results:** ranking with 95% confidence intervals, an all-vs-all matchup heatmap, and an A/B verdict with a paired confidence interval and side-by-side metrics. Each deck has a full report. **Every stat tile opens its own detail screen**, and every card opens its own breakdown.
 - **Collection:** for decks tagged as owned: shared cards, deck overlap, color breakdowns, mana curves and card categories (ramp, draw, removal, protection…), all filterable by color.
 - **Card categories:** each deck's cards are auto-tagged into deck-building categories (a card can be in several), shown on the deck screen. See [docs/DESIGN.md](docs/DESIGN.md) for the visual direction.

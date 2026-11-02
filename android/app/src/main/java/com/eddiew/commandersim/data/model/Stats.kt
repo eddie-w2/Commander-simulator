@@ -36,7 +36,11 @@ data class SimulationReport(
     val ab: AbComparison? = null,
     /** Things the user should know about this run (missing cards, stopped early…). */
     val notes: List<String> = emptyList(),
+    /** Games the run set out to play; 0 in reports from before v0.3.05. */
+    val plannedGames: Int = 0,
 ) {
+    /** Fewer games than planned (stopped early, interrupted or failing); can be resumed while its checkpoint exists. */
+    val partial: Boolean get() = plannedGames > 0 && meta.games < plannedGames
     fun deck(id: String): DeckReport? = decks.firstOrNull { it.deckId == id }
     val ranked: List<DeckReport> get() = decks.sortedByDescending { it.outcome.winRate }
     fun name(id: String): String = deck(id)?.name ?: id

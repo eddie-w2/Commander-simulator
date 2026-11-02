@@ -50,10 +50,12 @@ import com.eddiew.commandersim.sim.ManaBase
 import com.eddiew.commandersim.ui.results.ManaBaseView
 
 @Composable
-fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVariant: (String) -> Unit, onRunAb: () -> Unit) {
+fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVariant: (String) -> Unit, onRunAb: () -> Unit, onOpenRun: (String) -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
+    val runs by vm.runs.collectAsStateWithLifecycle()
+    val tests = remember(runs, deckId) { com.eddiew.commandersim.data.DeckHistory.of(runs, deckId) }
     val scope = rememberCoroutineScope()
     var syncMessage by remember { mutableStateOf<String?>(null) }
     var confirmRestore by remember { mutableStateOf<DeckVersion?>(null) }
@@ -94,6 +96,7 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
         item {
             HudChip(if (deck.owned) "✓ Owned" else "Mark as owned", deck.owned, { vm.setOwned(deck.id, !deck.owned) }, color = Hud.Cyan)
         }
+        item { DeckTestHistory(tests, onOpenRun) }
         if (deck.sourceUrl != null) {
             item {
                 HudPanel(title = "Linked deck", accent = Hud.Electric) {

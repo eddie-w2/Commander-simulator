@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,7 +74,15 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val sim by vm.sim.collectAsStateWithLifecycle()
+    val resumable by vm.resumable.collectAsStateWithLifecycle()
     val running = sim is SimState.Running
+    // A run that finished (here or in the background) opens its results.
+    LaunchedEffect(sim) {
+        if (sim is SimState.Done) {
+            vm.acknowledgeRun()
+            onFinished()
+        }
+    }
     val ab = settings.mode == SimMode.AB
 
     val a = decks.firstOrNull { it.id == settings.aId }
@@ -107,7 +116,7 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
                 HudPanel(title = "B · variant", accent = Hud.Cyan) {
                     DeckPicker(decks.sortedByDescending { it.parentId == settings.aId }, settings.bId, exclude = settings.aId) { vm.setB(it) }
                 }
-                HudPanel(title = "Field · decks A and B play against") {
+                HudPanel(title = "Field · decks A and B play against", trailing = { PoolActions(vm, running) }) {
                     PoolList(decks.filter { it.id != settings.aId && it.id != settings.bId }, settings.pool) { vm.togglePool(it) }
                     if (field.isEmpty()) {
                         Spacer(Modifier.height(6.dp))
@@ -120,7 +129,7 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall, color = Hud.Dim,
                 )
             } else {
-                HudPanel(title = "Pool · tap to include") {
+                HudPanel(title = "Pool · tap to include", trailing = { PoolActions(vm, running) }) {
                     PoolList(decks, settings.pool) { vm.togglePool(it) }
                     if (poolDecks.size < 2) {
                         Spacer(Modifier.height(6.dp))
@@ -194,10 +203,37 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
                 }
             }
 
+            val r = resumable
+            if (r != null && !running) {
+                HudPanel(title = if (r.done > 0) "Unfinished run" else "Interrupted run", accent = Hud.Warn) {
+                    Text(
+                        (if (r.planned > 0) "${r.done} of ${r.planned} games played" else "${r.done} games played") +
+                            " · ${if (r.engine == "forge") "Forge" else "Quick model"} · " +
+                            java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(r.createdAt)),
+                        style = MaterialTheme.typography.bodyMedium, color = Hud.Text,
+                    )
+                    Text(r.deckNames.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Hud.Dim, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Finished games are saved (see Results). Resume plays only the games that are left, with the same decks.",
+                        style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HudButton("▶ Resume", { vm.resumeRun() }, Modifier.weight(1f))
+                        HudOutlineButton("Discard", { vm.discardResumable() }, color = Hud.Muted)
+                    }
+                }
+            }
+
             when (val s = sim) {
-                is SimState.Running -> RunningPanel(s, totalGames, onStop = { vm.stopEarly() }, onCancel = { vm.cancelSimulation() })
+                is SimState.Running -> RunningPanel(s, if (s.total > 0) s.total else totalGames, onStop = { vm.stopEarly() }, onCancel = { vm.cancelSimulation() })
                 is SimState.Failed -> HudPanel(title = "Simulation failed", accent = Hud.Negative) {
                     Text(s.message, style = MaterialTheme.typography.bodyMedium, color = Hud.Negative)
+                    if (resumable != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("Games finished before the failure were saved to Results; you can resume above.",
+                            style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+                    }
                     if (s.log.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         LogView(s.log, maxLines = 40)
@@ -211,11 +247,22 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
 
             HudButton(
                 if (running) "Running…" else if (ab) "▶ Run A/B test" + (if (forge) " · Forge" else "") else "▶ Run simulation" + (if (forge) " · Forge" else ""),
-                onClick = { vm.runSimulation(onFinished) },
+                onClick = { vm.runSimulation() },
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
                 enabled = !running && ready,
             )
         }
+    }
+}
+
+/** "All" / "None" for the pool. */
+@Composable
+private fun PoolActions(vm: AppViewModel, running: Boolean) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("ALL", style = MaterialTheme.typography.labelSmall, color = if (running) Hud.Dim else Hud.Electric,
+            modifier = Modifier.clickable(enabled = !running) { vm.selectAllPool() })
+        Text("NONE", style = MaterialTheme.typography.labelSmall, color = if (running) Hud.Dim else Hud.Electric,
+            modifier = Modifier.clickable(enabled = !running) { vm.clearPool() })
     }
 }
 
