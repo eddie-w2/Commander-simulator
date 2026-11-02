@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.03
+- Fix: Forge runs failed at start-up ("Missing placeholder face for 'eiganjo_dynastorian_replenish'") when a deck had a card that borrows its second half from another card, such as the new "prepare" cards (Eiganjo Dynastorian uses Replenish). The engine now loads those cards too.
+- If Forge still can't load a card script, it skips that one card and lists it under "Forge doesn't know" instead of failing the whole run.
+
 ## v0.3.02
 - **Moxfield profile import:** Decks → Moxfield profile (or paste a profile link into Import). Enter `moxfield.com/users/<name>` or a username to list that user's public decks with checkboxes.
   - Select all/none, plus a "Commander only" filter.

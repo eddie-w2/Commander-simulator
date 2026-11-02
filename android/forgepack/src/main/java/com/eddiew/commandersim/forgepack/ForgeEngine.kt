@@ -68,29 +68,52 @@ internal class ForgeEngine(
         val missing = mutableListOf<String>()
         val newNames = names.filter { it.lowercase() !in loadedNames }
         if (!dbLoaded || newNames.isNotEmpty()) {
-            // 1. Extract the card scripts (every card used so far this session, so the database can be reused).
+            // 1. Extract the card scripts (every card used so far this session, so the database can be reused),
+            //    plus any card a script borrows a face from ("CopyFaceFrom:Replenish" on prepare cards and the like).
             val cardsDir = File(workDir, "cardsfolder").apply { mkdirs() }
             ZipFile(File(resRoot, "cardsfolder.zip")).use { zip ->
-                for (name in names) {
-                    val entry = entryFor(name) ?: continue
+                val queue = ArrayDeque(names.mapNotNull { entryFor(it) })
+                val done = HashSet<String>()
+                while (queue.isNotEmpty()) {
+                    val entry = queue.removeFirst()
+                    if (!done.add(entry)) continue
                     val out = File(cardsDir, entry)
-                    if (out.exists()) continue
-                    out.parentFile?.mkdirs()
-                    val ze = zip.getEntry(entry) ?: continue
-                    zip.getInputStream(ze).use { input -> out.outputStream().use { input.copyTo(it) } }
+                    if (!out.exists()) {
+                        val ze = zip.getEntry(entry) ?: continue
+                        out.parentFile?.mkdirs()
+                        zip.getInputStream(ze).use { input -> out.outputStream().use { input.copyTo(it) } }
+                    }
+                    out.useLines { lines ->
+                        lines.filter { it.startsWith("CopyFaceFrom:") }
+                            .mapNotNull { entryFor(it.substringAfter(':').trim()) }
+                            .forEach { queue.addLast(it) }
+                    }
                 }
             }
             log("Loading card scripts, editions and tokens…")
-            // 2. Load them (plus editions and tokens) into Forge's card database.
+            // 2. Load them (plus editions and tokens) into Forge's card database. A script Forge can't finish
+            //    (a face it borrows is missing) is dropped and reported as unknown instead of failing the run.
             val customEditions = File(workDir, "custom-editions").apply { mkdirs() }
-            StaticData(
-                CardStorageReader(cardsDir.path, null, false),
-                CardStorageReader(File(resRoot, "tokenscripts").path, null, false),
-                null, null,
-                File(resRoot, "editions").path, customEditions.path, File(resRoot, "blockdata").path, "",
-                "Latest Art All Editions",
-                false, false, false, false,
-            ).apply { setMulliganRule(forge.MulliganDefs.MulliganRule.London) }
+            var attempts = 0
+            while (true) {
+                try {
+                    StaticData(
+                        CardStorageReader(cardsDir.path, null, false),
+                        CardStorageReader(File(resRoot, "tokenscripts").path, null, false),
+                        null, null,
+                        File(resRoot, "editions").path, customEditions.path, File(resRoot, "blockdata").path, "",
+                        "Latest Art All Editions",
+                        false, false, false, false,
+                    ).apply { setMulliganRule(forge.MulliganDefs.MulliganRule.London) }
+                    break
+                } catch (e: java.util.NoSuchElementException) {
+                    val bad = Regex("""placeholder face for '([^']+)'""").find(e.message.orEmpty())?.groupValues?.get(1)
+                    val file = bad?.let { b -> cardsDir.walkTopDown().firstOrNull { it.isFile && it.name == "$b.txt" } }
+                    if (file == null || ++attempts > 20) throw e
+                    log("Skipping ${file.nameWithoutExtension}: ${e.message}")
+                    file.delete()
+                }
+            }
             loadedNames += names.map { it.lowercase() }
             dbLoaded = true
         } else {
