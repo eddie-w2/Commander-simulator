@@ -56,6 +56,7 @@ import com.eddiew.commandersim.SimState
 import com.eddiew.commandersim.data.model.Deck
 import com.eddiew.commandersim.ui.components.ColorPips
 import com.eddiew.commandersim.ui.components.HudButton
+import com.eddiew.commandersim.ui.components.ScanAnimation
 import com.eddiew.commandersim.ui.components.HudChip
 import com.eddiew.commandersim.ui.components.HudOutlineButton
 import com.eddiew.commandersim.ui.components.HudPanel
@@ -296,6 +297,8 @@ private fun RunningPanel(state: SimState.Running, total: Int, onStop: () -> Unit
                 )
             }
         }
+        Spacer(Modifier.height(10.dp))
+        ScanAnimation(anim)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HudButton("Stop & show results", onStop, Modifier.weight(1f), enabled = done > 0)

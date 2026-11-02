@@ -39,7 +39,7 @@ object Hud {
     fun manaColor(c: Char): Color = when (c) {
         'W' -> Color(0xFFF4EBC8)
         'U' -> Color(0xFF3E9BFF)
-        'B' -> Color(0xFF9A8C98)
+        'B' -> Color(0xFF6A3FA8) // dark purple: grey was too close to colourless
         'R' -> Color(0xFFFF5A3D)
         'G' -> Color(0xFF2FD07A)
         else -> Color(0xFFB8C0CC)

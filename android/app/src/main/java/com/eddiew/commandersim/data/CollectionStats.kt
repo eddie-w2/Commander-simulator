@@ -109,4 +109,35 @@ object CollectionStats {
             copiesNeeded = shared.sumOf { it.count - 1 },
         )
     }
+
+    /**
+     * Keeps only the cards whose colour identity includes every colour in [colors] ("G" = green cards, "UG" = cards
+     * that are both blue and green). "C" means colourless cards only. Empty = no filter. Cards without colour data
+     * are dropped while a filter is on.
+     */
+    fun filterColors(decks: List<Deck>, colors: String): List<Deck> {
+        if (colors.isEmpty()) return decks
+        fun keep(c: DeckCard): Boolean {
+            val id = c.colors ?: return false
+            val set = id.filter { it in "WUBRG" }
+            return if ('C' in colors) set.isEmpty() else colors.all { it in set }
+        }
+        return decks.map { d -> d.copy(commanders = d.commanders.filter(::keep), cards = d.cards.filter(::keep)) }
+    }
+
+    /** Non-land cards by mana value 0..7+ across [decks]; [unique] counts each card name once. */
+    fun curve(decks: List<Deck>, unique: Boolean): List<Int> {
+        val out = IntArray(8)
+        val cards = decks.flatMap { allCards(it) }.filter { it.type != CardType.LAND }
+        val list = if (unique) cards.distinctBy { it.name.lowercase() }.map { it.copy(quantity = 1) } else cards
+        list.forEach { c -> out[(c.manaValue ?: 0.0).toInt().coerceIn(0, 7)] += c.quantity }
+        return out.toList()
+    }
+
+    /** Average mana value of a deck's non-land cards, or null when it has none. */
+    fun avgManaValue(deck: Deck): Double? {
+        val nl = allCards(deck).filter { it.type != CardType.LAND && it.manaValue != null }
+        val n = nl.sumOf { it.quantity }
+        return if (n == 0) null else nl.sumOf { it.manaValue!! * it.quantity } / n
+    }
 }

@@ -3,6 +3,7 @@ package com.eddiew.commandersim
 import com.eddiew.commandersim.data.model.Deck
 import com.eddiew.commandersim.data.model.DeckCard
 import com.eddiew.commandersim.sim.ManaBase
+import com.eddiew.commandersim.sim.Category
 import com.eddiew.commandersim.sim.ManaColor
 import com.eddiew.commandersim.sim.ManaCost
 import com.eddiew.commandersim.sim.Role
@@ -115,4 +116,31 @@ class CardModelTest {
         assertEquals(25, base.lands)
         assertTrue("warns about blue", base.warnings.any { it.startsWith("Blue") })
     }
+
+    @Test
+    fun `card categories`() {
+        fun cats(type: String, cost: String, oracle: String, produces: String? = null) =
+            com.eddiew.commandersim.sim.CardCategories.of(card("X", type, cost, oracle, produces), gu)
+        assertEquals(setOf(Category.RAMP), cats("Artifact", "{1}", "{T}: Add {C}{C}.", "C"))
+        assertEquals(setOf(Category.PROTECTION), cats("Instant", "{G}", "Target creature you control gains hexproof and indestructible until end of turn."))
+        assertEquals(setOf(Category.PROTECTION), cats("Instant", "{2}{W}", "Creatures you control gain indestructible until end of turn."))
+        assertEquals(setOf(Category.RECURSION), cats("Sorcery", "{1}{G}", "Return target permanent card from your graveyard to your hand."))
+        assertEquals("the token goes to the opponent", setOf(Category.REMOVAL), cats("Instant", "{2}{G}", "Destroy target permanent. Its controller creates a 3/3 green Beast creature token."))
+        assertTrue(Category.WIPE in cats("Sorcery", "{2}{W}{W}", "Destroy all creatures. They can't be regenerated."))
+        assertTrue("lands have no category", com.eddiew.commandersim.sim.CardCategories.of(DeckCard("Forest", typeLine = "Basic Land — Forest"), gu).isEmpty())
+    }
+
+    @Test
+    fun `collection colour filter`() {
+        val deck = Deck("d", "Test", emptyList(), listOf(
+            DeckCard("Elf", colors = "G"), DeckCard("Kraken", colors = "U"), DeckCard("Simic", colors = "GU"),
+            DeckCard("Ring", colors = ""), DeckCard("Unknown"),
+        ), 0L)
+        fun names(f: String) = com.eddiew.commandersim.data.CollectionStats.filterColors(listOf(deck), f).single().cards.map { it.name }
+        assertEquals(listOf("Elf", "Simic"), names("G"))
+        assertEquals(listOf("Simic"), names("GU"))
+        assertEquals(listOf("Ring"), names("C"))
+        assertEquals(5, names("").size)
+    }
 }
+

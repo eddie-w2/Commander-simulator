@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.04
+- **Card categories:** every deck's cards are sorted automatically into ramp, card draw, removal, board wipes, counterspells, protection, tutors, recursion, token makers, burn/drain and lifegain. A card can fall into several. Categories come from Scryfall tags and rules text.
+  - The deck screen has a category radar plus a count for each category, coloured against a common guideline (~10 ramp, ~10 draw, ~8 removal, ~3 wipes).
+  - Tap a category to list its cards.
+- **Collection:**
+  - **Colour filter** (W U B R G C) at the top. Every chart follows it, so "G" shows the same analytics for green cards only. Pick several colours for cards that are all of them; C shows colourless cards.
+  - **Mana curves:** a curve for the whole collection, average mana value by deck, and a small curve for each deck.
+  - **Categories:** average per deck for each category, a category-by-deck chart with the guideline, and a decks × categories heatmap.
+- **Simulation animation:** a retro scanner (hex data stream, oscilloscope trace, sweeping beam) plays while a simulation runs.
+- Black colour identity is now dark purple so it no longer looks like colourless.
+- Design direction written down in `docs/DESIGN.md`.
+
 ## v0.3.03
 - Fix: Forge runs failed at start-up ("Missing placeholder face for 'eiganjo_dynastorian_replenish'") when a deck had a card that borrows its second half from another card, such as the new "prepare" cards (Eiganjo Dynastorian uses Replenish). The engine now loads those cards too.
 - If Forge still can't load a card script, it skips that one card and lists it under "Forge doesn't know" instead of failing the whole run.

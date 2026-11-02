@@ -31,6 +31,11 @@ import com.eddiew.commandersim.AppViewModel
 import com.eddiew.commandersim.data.CollectionStats
 import com.eddiew.commandersim.data.model.CardType
 import com.eddiew.commandersim.ui.components.BarList
+import com.eddiew.commandersim.ui.components.ColumnChart
+import com.eddiew.commandersim.sim.CardCategories
+import com.eddiew.commandersim.sim.Category
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import com.eddiew.commandersim.ui.components.ColorPips
 import com.eddiew.commandersim.ui.components.DonutChart
 import com.eddiew.commandersim.ui.components.Heatmap
@@ -51,7 +56,11 @@ private val colorNames = mapOf('W' to "White", 'U' to "Blue", 'B' to "Black", 'R
 @Composable
 fun CollectionScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
-    val owned = decks.filter { it.owned }
+    val ownedAll = decks.filter { it.owned }
+    /** Colour filter: letters of the colours a card must include ("C" = colourless only). */
+    var filter by rememberSaveable { mutableStateOf("") }
+    val owned = remember(ownedAll, filter) { CollectionStats.filterColors(ownedAll, filter) }
+    var category by rememberSaveable { mutableStateOf(Category.RAMP) }
     var includeLands by rememberSaveable { mutableStateOf(false) }
     var uniqueOnly by rememberSaveable { mutableStateOf(false) }
     var sharedLands by rememberSaveable { mutableStateOf(false) }
@@ -59,8 +68,8 @@ fun CollectionScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit) {
     var expanded by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Collection", "${owned.size} owned decks")
-        if (owned.isEmpty()) {
+        ScreenHeader("Collection", "${ownedAll.size} owned decks" + if (filter.isEmpty()) "" else " · ${filterLabel(filter)} cards only")
+        if (ownedAll.isEmpty()) {
             Column(Modifier.padding(16.dp)) {
                 Notice("No decks are marked as owned yet. Open a deck and tap OWNED, or switch on \"I own this deck\" when importing.", color = Hud.Electric)
             }
@@ -78,6 +87,10 @@ fun CollectionScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            item { ColorFilter(filter) { filter = it } }
+            if (filter.isNotEmpty() && summary.totalCards == 0) {
+                item { Notice("No ${filterLabel(filter).lowercase()} cards in your owned decks.", color = Hud.Electric) }
+            }
             item {
                 TileRow(
                     Triple("Owned decks", "${summary.decks}", "${summary.totalCards} cards"),
@@ -144,6 +157,80 @@ fun CollectionScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit) {
                                 style = MaterialTheme.typography.labelSmall, color = Hud.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             )
                         }
+                    }
+                }
+            }
+
+            // ── Mana curve
+            item {
+                HudPanel(title = "Mana curve · " + if (uniqueOnly) "unique cards" else "every copy") {
+                    val curve = CollectionStats.curve(owned, uniqueOnly)
+                    val n = curve.sum()
+                    val avg = if (n > 0) curve.withIndex().sumOf { (i, c) -> i * c }.toDouble() / n else 0.0
+                    ColumnChart(curve.map { it.toDouble() }, List(8) { if (it == 7) "7+" else "$it" })
+                    Spacer(Modifier.height(6.dp))
+                    Text("$n non-land cards · average mana value ${"%.2f".format(avg)} (7+ counted as 7)",
+                        style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+                }
+            }
+            item {
+                HudPanel(title = "Average mana value by deck") {
+                    BarList(
+                        owned.mapNotNull { d -> CollectionStats.avgManaValue(d)?.let { d.name to it } }.sortedByDescending { it.second },
+                        valueFormat = { "%.2f".format(it) }, color = Hud.Cyan,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    BarListCurves(owned)
+                }
+            }
+
+            // ── Card categories
+            item {
+                val counts = owned.map { CardCategories.counts(it) }
+                HudPanel(title = "Card categories · average per deck") {
+                    BarList(
+                        Category.entries.map { c -> c.label to counts.sumOf { it[c] ?: 0 }.toDouble() / counts.size.coerceAtLeast(1) }
+                            .filter { it.second > 0 }.sortedByDescending { it.second },
+                        valueFormat = { "%.1f".format(it) },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("Detected from Scryfall tags and rules text; a card can count in several categories. " +
+                        "A common guideline is about 10 ramp, 10 card draw, 8 removal and 3 board wipes.",
+                        style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+                }
+            }
+            item {
+                HudPanel(title = "Category by deck", accent = Hud.Cyan) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(Category.entries) { c -> HudChip(c.label, category == c, { category = c }, color = Hud.Cyan) }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    val perDeck = owned.map { it.name to (CardCategories.counts(it)[category] ?: 0).toDouble() }.sortedByDescending { it.second }
+                    val target = CardCategories.guideline[category]
+                    BarList(perDeck, valueFormat = { "%.0f".format(it) }, color = Hud.Cyan,
+                        maxValue = maxOf(perDeck.maxOfOrNull { it.second } ?: 1.0, target?.toDouble() ?: 0.0, 1.0))
+                    if (target != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Guideline: about $target ${category.label.lowercase()} per deck. " +
+                            "${perDeck.count { it.second >= target }} of ${perDeck.size} decks meet it.",
+                            style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
+                    }
+                }
+            }
+            if (owned.size >= 2) {
+                item {
+                    HudPanel(title = "Category mix · decks × categories") {
+                        val shown = Category.entries.filter { c -> owned.any { (CardCategories.counts(it)[c] ?: 0) > 0 } }
+                        val m = owned.map { d -> CardCategories.counts(d).let { cnt -> shown.map { (cnt[it] ?: 0).toDouble() } } }
+                        val max = m.flatten().maxOrNull() ?: 1.0
+                        Heatmap(
+                            rowLabels = owned.map { it.name },
+                            colLabels = shown.map { it.short },
+                            values = m.map { row -> row.map { it } },
+                            mid = 0.0, span = max.coerceAtLeast(1.0), format = { "%.0f".format(it) },
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(shown.joinToString(" · ") { "${it.short} ${it.label}" }, style = MaterialTheme.typography.labelSmall, color = Hud.Dim)
                     }
                 }
             }
@@ -252,3 +339,53 @@ private fun avgOverlap(decks: List<com.eddiew.commandersim.data.model.Deck>): Do
     for (i in decks.indices) for (j in decks.indices) if (i != j) { sum += m[i][j].toDouble() / sizes[i]; n++ }
     return sum / n
 }
+
+private fun filterLabel(f: String): String =
+    if ('C' in f) "Colorless" else f.toList().joinToString("-") { colorNames[it] ?: "$it" }
+
+/** W U B R G C chips; colours combine ("cards that are all of these"), colourless is on its own. */
+@Composable
+private fun ColorFilter(filter: String, onChange: (String) -> Unit) {
+    Column {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            HudChip("All", filter.isEmpty(), { onChange("") }, color = Hud.Muted)
+            "WUBRGC".forEach { c ->
+                val on = c in filter
+                HudChip("$c", on, {
+                    onChange(
+                        when {
+                            c == 'C' -> if (on) "" else "C"
+                            on -> filter.replace("$c", "")
+                            else -> "WUBRG".filter { it in filter.replace("C", "") + c }
+                        },
+                    )
+                }, color = Hud.manaColor(c))
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (filter.isEmpty()) "Filter every chart to cards of one colour (or several: cards that are all of them)."
+            else "Showing only ${filterLabel(filter).lowercase()} cards. Every chart below uses this filter.",
+            style = MaterialTheme.typography.labelSmall, color = Hud.Dim,
+        )
+    }
+}
+
+/** Small per-deck curve sparkline rows. */
+@Composable
+private fun BarListCurves(decks: List<com.eddiew.commandersim.data.model.Deck>) {
+    Text("CURVE BY DECK (MV 0–7+)", style = MaterialTheme.typography.labelSmall, color = Hud.Muted)
+    Spacer(Modifier.height(4.dp))
+    decks.forEach { d ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(d.name, style = MaterialTheme.typography.bodySmall, color = Hud.Text, modifier = Modifier.weight(1f),
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ColumnChart(
+                CollectionStats.curve(listOf(d), unique = false).map { it.toDouble() }, List(8) { "" },
+                Modifier.width(120.dp), height = 56.dp, highlightMax = false,
+                valueFormat = { "" },
+            )
+        }
+    }
+}
+

@@ -33,7 +33,6 @@ object ManaBase {
         var lands = 0; var rocks = 0; var dorks = 0; var rampSpells = 0; var tapped = 0
         val curve = IntArray(8)
         var mvSum = 0; var mvN = 0
-        val roleCount = HashMap<String, Int>()
 
         for ((dc, c) in all) {
             val q = dc.quantity
@@ -65,15 +64,6 @@ object ManaBase {
                 Role.DORK in c.roles -> dorks += q
             }
             if (Role.RAMP_LAND in c.roles) rampSpells += q
-            fun role(label: String, has: Boolean) { if (has) roleCount.merge(label, q, Int::plus) }
-            role("Ramp", Role.ROCK in c.roles || Role.DORK in c.roles || Role.RAMP_LAND in c.roles)
-            role("Card draw", Role.DRAW in c.roles || Role.ENGINE in c.roles)
-            role("Removal", Role.REMOVAL in c.roles)
-            role("Board wipes", Role.WIPE in c.roles)
-            role("Counterspells", Role.COUNTER in c.roles)
-            role("Tutors", Role.TUTOR in c.roles)
-            role("Burn / drain", Role.BURN in c.roles || Role.DRAIN in c.roles)
-            role("Token makers", Role.TOKENS in c.roles)
         }
 
         val pipTotal = pips.sum().coerceAtLeast(1)
@@ -106,7 +96,8 @@ object ManaBase {
         return ManaBaseStats(
             colors = lines, lands = lands, rocks = rocks, dorks = dorks, rampSpells = rampSpells, tappedLands = tapped,
             avgManaValue = if (mvN > 0) mvSum.toDouble() / mvN else 0.0, curve = curve.toList(),
-            roles = roleCount.entries.sortedByDescending { it.value }.map { NamedValue(it.key, it.value.toDouble()) },
+            roles = CardCategories.counts(deck).filter { it.value > 0 }.entries.sortedByDescending { it.value }
+                .map { NamedValue(it.key.label, it.value.toDouble()) },
             warnings = warnings, dataComplete = complete,
         )
     }

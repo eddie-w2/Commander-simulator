@@ -91,7 +91,7 @@ internal fun LazyListScope.manaTab(d: DeckReport) {
 
 /** Static mana base: pips vs sources per colour, warnings, roles and curve. */
 @Composable
-fun ManaBaseView(b: ManaBaseStats, showCurve: Boolean = true) {
+fun ManaBaseView(b: ManaBaseStats, showCurve: Boolean = true, showRoles: Boolean = true) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         b.warnings.forEach { Notice(it) }
         HudPanel(title = "Pips vs sources") {
@@ -123,7 +123,7 @@ fun ManaBaseView(b: ManaBaseStats, showCurve: Boolean = true) {
             Triple("Rocks + dorks", "${b.rocks + b.dorks}", "${b.rocks} / ${b.dorks}"),
             Triple("Land ramp", "${b.rampSpells}", "spells"),
         )
-        if (b.roles.isNotEmpty()) {
+        if (showRoles && b.roles.isNotEmpty()) {
             HudPanel(title = "Card roles") {
                 BarList(b.roles.map { it.name to it.value }, valueFormat = { num(it, 0) })
                 Spacer(Modifier.height(6.dp))
