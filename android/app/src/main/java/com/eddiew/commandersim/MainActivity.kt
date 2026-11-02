@@ -35,6 +35,7 @@ import com.eddiew.commandersim.ui.components.gridBackground
 import com.eddiew.commandersim.ui.decks.DeckDetailScreen
 import com.eddiew.commandersim.ui.decks.DecksScreen
 import com.eddiew.commandersim.ui.decks.ImportDeckScreen
+import com.eddiew.commandersim.ui.decks.PreconsScreen
 import com.eddiew.commandersim.ui.decks.VariantEditorScreen
 import com.eddiew.commandersim.ui.results.CardDetailScreen
 import com.eddiew.commandersim.ui.results.Metric
@@ -79,7 +80,7 @@ fun App(vm: AppViewModel = viewModel()) {
         Box(Modifier.fillMaxSize().gridBackground().padding(padding)) {
             NavHost(nav, startDestination = "decks") {
                 composable("decks") {
-                    DecksScreen(vm, onImport = { nav.navigate("import") }, onOpen = { nav.navigate("deck/$it") }, onSettings = { nav.navigate("settings") })
+                    DecksScreen(vm, onImport = { nav.navigate("import") }, onOpen = { nav.navigate("deck/$it") }, onSettings = { nav.navigate("settings") }, onPrecons = { nav.navigate("precons") })
                 }
                 composable("import") {
                     ImportDeckScreen(vm, onDone = { nav.popBackStack() })
@@ -132,6 +133,9 @@ fun App(vm: AppViewModel = viewModel()) {
                 }
                 composable("collection") {
                     CollectionScreen(vm, onOpenDeck = { nav.navigate("deck/$it") })
+                }
+                composable("precons") {
+                    PreconsScreen(vm, onBack = { nav.popBackStack() }, onOpenDeck = { nav.navigate("deck/$it") })
                 }
                 composable("settings") {
                     SettingsScreen(vm, onBack = { nav.popBackStack() })

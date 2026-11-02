@@ -28,12 +28,13 @@ import com.eddiew.commandersim.data.model.Deck
 import com.eddiew.commandersim.ui.components.ColorPips
 import com.eddiew.commandersim.ui.components.HudButton
 import com.eddiew.commandersim.ui.components.HudChip
+import com.eddiew.commandersim.ui.components.HudOutlineButton
 import com.eddiew.commandersim.ui.components.HudPanel
 import com.eddiew.commandersim.ui.components.ScreenHeader
 import com.eddiew.commandersim.ui.theme.Hud
 
 @Composable
-fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit) {
+fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit, onPrecons: () -> Unit) {
     val decks by vm.decks.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
@@ -56,7 +57,12 @@ fun DecksScreen(vm: AppViewModel, onImport: () -> Unit, onOpen: (String) -> Unit
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item { HudButton("+ Import deck", onImport, Modifier.fillMaxWidth()) }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HudButton("+ Import deck", onImport, Modifier.weight(1f))
+                    HudOutlineButton("Precons", onPrecons, color = Hud.Cyan)
+                }
+            }
             if (decks.isNotEmpty()) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -16,7 +16,7 @@ import kotlin.time.Duration.Companion.minutes
 
 /**
  * Plays real Forge games. Runs only when FORGE_RES points at an unpacked forge-res bundle
- * (CI sets it after tools/build-forge.sh); skipped otherwise.
+ * (unzip android/app/src/main/assets/forge/forge-res.zip); skipped otherwise, including in CI.
  */
 class ForgeEngineTest {
     private val res = System.getenv("FORGE_RES")?.let { File(it) }

@@ -21,6 +21,7 @@ import java.util.EnumSet
 import java.util.Locale
 import java.util.PropertyResourceBundle
 import java.util.Random
+import java.util.function.Supplier
 import java.util.zip.ZipFile
 
 /**
@@ -89,7 +90,7 @@ internal class ForgeEngine(
             File(resRoot, "editions").path, customEditions.path, File(resRoot, "blockdata").path, "",
             "Latest Art All Editions",
             false, false, false, false,
-        )
+        ).apply { setMulliganRule(forge.MulliganDefs.MulliganRule.London) }
         // 3. Build Forge decks.
         forgeDecks.clear()
         for (d in decks) {
@@ -172,6 +173,24 @@ internal class ForgeEngine(
             set("english", true)
             set("silent", true)
             AiProfileUtil.loadAllProfiles(File(resRoot, "ai").path)
+
+            // Forge's game data lists. TypeLists.txt is essential: it tells the engine that "Plains" etc. are
+            // basic land types, which is where basic lands get their mana abilities.
+            val lists = File(resRoot, "lists")
+            fun lines(name: String): List<String> = File(lists, name).takeIf { it.exists() }?.readLines() ?: emptyList()
+            if (!forge.card.CardType.Constant.LOADED.isSet) {
+                val sections = forge.util.FileSection.parseSections(lines("TypeLists.txt"))
+                for ((section, values) in sections) forge.card.CardType.Helper.parseTypes(section, values)
+                forge.card.CardType.Constant.LOADED.set()
+            }
+            if (forge.game.card.CardUtil.NON_STACKING_LIST.isEmpty()) {
+                lines("NonStackingKWList.txt").filter { it.length > 1 }.forEach { forge.game.card.CardUtil.NON_STACKING_LIST.add(it) }
+            }
+            forge.ai.simulation.AiCardLists.configure(
+                Supplier { lines("ai-card-roles.txt") },
+                Supplier { lines("commander-bracket-combos.txt") },
+                Supplier { lines("ai-commander-combos.txt") },
+            )
             initialised = resRoot.path
         }
     }

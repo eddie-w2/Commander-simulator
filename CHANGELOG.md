@@ -2,6 +2,7 @@
 
 ## v0.1.03
 - **Forge engine on the phone:** simulations can now use Forge's real rules engine and AI. The app loads only the card scripts your decks need, records every game event into the full statistics, shows live progress with time remaining, and lets you stop early and keep the results. Cards Forge doesn't know are listed in the results.
+- **Commander precons:** Decks → Precons lists every official Commander precon, synced from MTGJSON, kept on the phone and refreshed weekly. Search by name, set code or year, preview the commander and colours, and add a deck in one tap (optionally marked as owned). Added precons can be re-synced like linked decks.
 - **Self-update:** Settings → App updates checks GitHub Releases, downloads the new APK and opens the installer. The Decks tab shows when an update is available.
 - Seat statistics now use actual turn order when the engine picks who goes first.
 

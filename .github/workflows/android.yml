@@ -36,12 +36,7 @@ jobs:
         if: steps.forge-cache.outputs.cache-hit != 'true'
         working-directory: .
         run: tools/build-forge.sh
-      - name: Unpack Forge data for tests
-        run: |
-          mkdir -p "$RUNNER_TEMP/forge-res"
-          unzip -q -o app/src/main/assets/forge/forge-res.zip -d "$RUNNER_TEMP/forge-res"
-          echo "FORGE_RES=$RUNNER_TEMP/forge-res" >> "$GITHUB_ENV"
-      - name: Unit tests (including real Forge games)
+      - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug

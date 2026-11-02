@@ -29,10 +29,14 @@ class DeckLinkImporter(private val json: Json = Json { ignoreUnknownKeys = true 
     companion object {
         private val moxfield = Regex("""moxfield\.com/decks/([A-Za-z0-9_-]+)""")
         private val archidekt = Regex("""archidekt\.com/(?:decks|api/decks)/(\d+)""")
+        private val mtgjson = Regex("""mtgjson\.com/api/v5/decks/([^/?#]+?)(?:\.json)?(?:$|[?#])""")
+
+        /** MTGJSON file for one precon deck. */
+        fun mtgjsonUrl(fileName: String) = "https://mtgjson.com/api/v5/decks/$fileName.json"
 
         fun isDeckLink(text: String): Boolean {
             val t = text.trim()
-            return !t.contains('\n') && (moxfield.containsMatchIn(t) || archidekt.containsMatchIn(t))
+            return !t.contains('\n') && (moxfield.containsMatchIn(t) || archidekt.containsMatchIn(t) || mtgjson.containsMatchIn(t))
         }
 
         private val colourNames = mapOf("white" to 'W', "blue" to 'U', "black" to 'B', "red" to 'R', "green" to 'G')
@@ -42,6 +46,10 @@ class DeckLinkImporter(private val json: Json = Json { ignoreUnknownKeys = true 
         val url = link.trim()
         moxfield.find(url)?.let { return@withContext importMoxfield(it.groupValues[1], url) }
         archidekt.find(url)?.let { return@withContext importArchidekt(it.groupValues[1], url) }
+        mtgjson.find(url)?.let {
+            val body = get(mtgjsonUrl(it.groupValues[1]))
+            return@withContext parseMtgjsonDeck(json.parseToJsonElement(body).jsonObject, mtgjsonUrl(it.groupValues[1]))
+        }
         throw ImportException("That link isn't a Moxfield or Archidekt deck.")
     }
 
@@ -138,9 +146,40 @@ class DeckLinkImporter(private val json: Json = Json { ignoreUnknownKeys = true 
         return Imported(name, commanders, cards, url)
     }
 
+    // ─────────────────────────── MTGJSON (official precons) ───────────────────────────
+
+    internal fun parseMtgjsonDeck(root: JsonObject, url: String): Imported {
+        val data = (root["data"] as? JsonObject) ?: root
+        val name = data.str("name") ?: "Precon"
+        fun board(key: String): List<DeckCard> {
+            val arr = data[key] as? JsonArray ?: return emptyList()
+            val merged = LinkedHashMap<String, DeckCard>()
+            for (el in arr) {
+                val o = el as? JsonObject ?: continue
+                val cardName = o.str("faceName")?.takeIf { o.str("layout") == "meld" } ?: o.str("name") ?: continue
+                val c = DeckCard(
+                    name = cardName,
+                    quantity = o["count"]?.jsonPrimitive?.intOrNull ?: 1,
+                    setCode = o.str("setCode"),
+                    collectorNumber = o.str("number"),
+                    typeLine = o.str("type"),
+                    manaValue = (o["manaValue"] ?: o["convertedManaCost"])?.jsonPrimitive?.doubleOrNull,
+                    colors = (o["colorIdentity"] as? JsonArray)?.joinToString("") { it.jsonPrimitive.content },
+                )
+                val k = c.name.lowercase()
+                merged[k] = merged[k]?.let { it.copy(quantity = it.quantity + c.quantity) } ?: c
+            }
+            return merged.values.toList()
+        }
+        val commanders = board("commander")
+        val main = board("mainBoard").filterNot { m -> commanders.any { it.name.equals(m.name, ignoreCase = true) } }
+        if (main.isEmpty()) throw ImportException("MTGJSON returned an empty deck.")
+        return Imported(name, commanders, main, url)
+    }
+
     // ─────────────────────────── HTTP ───────────────────────────
 
-    private fun get(url: String): String {
+    internal fun get(url: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = 15_000

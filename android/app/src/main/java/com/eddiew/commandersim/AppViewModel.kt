@@ -79,6 +79,9 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     private val settingsFile = File(app.filesDir, "settings.json")
     private val scryfall = ScryfallClient()
     private val linkImporter = DeckLinkImporter()
+    private val preconRepo = com.eddiew.commandersim.data.PreconRepository(app.filesDir, linkImporter)
+    /** Official Commander precons, cached from MTGJSON. */
+    val precons = preconRepo.catalog
     /** True when this build includes Forge's engine and card data. */
     val forgeAvailable: Boolean = com.eddiew.commandersim.sim.forge.AndroidForge.isBundled(app)
     private var control: com.eddiew.commandersim.sim.SimControl? = null
@@ -110,6 +113,10 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
 
     init {
         if (autoLoad) viewModelScope.launch { runCatching { checkForUpdate() } }
+        if (autoLoad) viewModelScope.launch {
+            preconRepo.load()
+            if (preconRepo.isStale) runCatching { preconRepo.sync() }
+        }
         if (autoLoad) viewModelScope.launch {
             decksRepo.load()
             reportRepo.load()
@@ -358,6 +365,21 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         return if (replace) "Restored ${merged.decks.size} decks from the backup."
         else "Merged backup: ${merged.added} decks added, ${merged.updated} updated."
     }
+
+    // ───────────────────────────── Precons ─────────────────────────────
+
+    /** Refreshes the precon list from MTGJSON. Returns a message for the user. */
+    suspend fun syncPrecons(): String = try {
+        "Precon list updated: ${preconRepo.sync()} Commander decks."
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        "Couldn't sync precons: ${e.message}"
+    }
+
+    /** Downloads one precon and reads it like an import (commander detected if MTGJSON doesn't say). */
+    suspend fun previewPrecon(p: com.eddiew.commandersim.data.Precon): ImportPreview =
+        resolveImport(p.url).copy(name = p.name, sourceUrl = p.url)
 
     // ───────────────────────────── Simulation settings ─────────────────────────────
 
