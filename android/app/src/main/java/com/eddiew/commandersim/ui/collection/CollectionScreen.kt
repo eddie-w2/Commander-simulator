@@ -138,7 +138,7 @@ fun CollectionScreen(vm: AppViewModel, onOpenDeck: (String) -> Unit) {
                             StackedBar(CollectionStats.ColorCounts.ORDER.map { Hud.manaColor(it) to c[it].toDouble() })
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                CollectionStats.ColorCounts.ORDER.filter { c[it] > 0 }.joinToString("  ") { "$it ${c[it]}" } +
+                                CollectionStats.ColorCounts.ORDER.filter { c[it] > 0 }.toList().joinToString("  ") { "$it ${c[it]}" } +
                                     "   ·  mono ${c.mono} · multi ${c.multi} · colorless ${c.colorless}",
                                 style = MaterialTheme.typography.labelSmall, color = Hud.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             )
