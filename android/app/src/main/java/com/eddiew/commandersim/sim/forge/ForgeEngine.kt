@@ -53,6 +53,10 @@ internal class ForgeEngine(
 
     private val forgeDecks = HashMap<String, PreparedDeck>()
 
+    /** What the last game's recorder saw; useful when stats look wrong. */
+    var lastDiagnostics: String = ""
+        private set
+
     /** A deck converted to Forge, with Forge card name → the app's card name. */
     internal class PreparedDeck(val deck: Deck, val forgeDeck: forge.deck.Deck, val nameMap: Map<String, String>)
 
@@ -140,6 +144,7 @@ internal class ForgeEngine(
             t.join(10_000)
         }
         failure?.let { if (it is VirtualMachineError) throw it }
+        lastDiagnostics = "events=${recorder.eventCounts.toSortedMap()} errors=${recorder.errors} life=${recorder.lifeTotals()} failure=$failure"
         return recorder.finish(timedOut = t.isAlive || failure != null)
     }
 

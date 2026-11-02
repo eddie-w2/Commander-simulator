@@ -98,8 +98,16 @@ internal class ForgeRecorder(
         else -> CardType.UNKNOWN
     }
 
+    /** Diagnostics: events seen by type, and the first few errors swallowed while recording. */
+    val eventCounts = HashMap<String, Int>()
+    val errors = mutableListOf<String>()
+
+    /** Life totals per seat right now. */
+    fun lifeTotals(): List<Int> = players.map { it.life }
+
     @Subscribe
     fun receive(evt: GameEvent) {
+        eventCounts.merge(evt.javaClass.simpleName, 1, Int::plus)
         try {
             when (evt) {
                 is GameEventTurnBegan -> onTurn(evt)
@@ -141,8 +149,9 @@ internal class ForgeRecorder(
                 }
                 else -> Unit
             }
-        } catch (_: RuntimeException) {
+        } catch (e: RuntimeException) {
             // A stat we couldn't read must never break the game itself.
+            if (errors.size < 5) errors += "${evt.javaClass.simpleName}: $e"
         }
         checkEliminations()
         checkLimits()

@@ -43,6 +43,7 @@ class ForgeEngineTest {
         val start = System.currentTimeMillis()
         val r = engine.play(decks, seed = 1L)
         println("Forge game: rounds=${r.rounds} winner=${r.winnerSeat} cause=${r.winCondition} in ${System.currentTimeMillis() - start} ms")
+        println("Diagnostics: ${engine.lastDiagnostics}")
         r.tracks.forEachIndexed { i, t ->
             println("  seat $i place=${t.place} turns=${t.turnsTaken} drawn=${t.drawn} dmg=${t.dmgPlayers} taken=${t.taken} lands=${t.landsPlayed} casts=${t.cards.values.sumOf { it.casts }} kills=${t.kills}")
         }
