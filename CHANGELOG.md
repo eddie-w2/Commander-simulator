@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.06
+- **Fix: tokens.** Tokens were played as copies of the card that made them, so a commander that makes tokens (Merry, Warden of Isengard) was credited with every token's damage. That damage also counted as commander damage. Now:
+  - Each token is its own creature with its real size and keywords (e.g. 1/1 Soldier with lifelink).
+  - Token damage shows as its own source, e.g. "Soldier token (Merry, Warden of Isengard)".
+  - Tokens never deal commander damage.
+  - Treasure, Food and Clue tokens give mana, life and cards instead of attacking.
+- **The quick model now reads card text into abilities**, once per run, so games stay fast:
+  - Triggers: enters, dies, attacks, upkeep, end step, landfall, casting spells, artifacts or creatures entering, creatures dying, and the "whenever an opponent casts" draw engines.
+  - Effects: tokens, draw, drain, burn, life gain and +1/+1 counters.
+  - Activated abilities ("{2}, {T}: create…") use mana left over after combat.
+  - "Once each turn" limits are respected.
+- **Combat:**
+  - Attackers tap and can't block on opponents' turns (vigilance excepted).
+  - New keywords: first strike, vigilance, defender, "can't block", indestructible, hexproof and ward.
+  - Tribal lords pump only their creature type; anthems stop when they leave.
+  - Attacks go where the most damage gets through, finishing low-life players when lethal is on.
+  - Blocks are chosen to survive, trade up, or stop lethal.
+- **Interaction:**
+  - Instant removal and counterspells are held up and used on opponents' turns.
+  - Protection spells save a targeted creature.
+  - Exile, destroy, bounce and damage-based removal behave differently.
+  - Board wipes respect indestructible.
+  - Recursion returns the best permanent from the graveyard.
+- **Coverage report:** the deck screen shows which cards the quick model fully reads, partly reads or ignores, and exactly which lines. The run log reports each deck's coverage.
+
 ## v0.3.05
 - **Runs keep going in the background.** A simulation now runs in a foreground service (with a progress notification and a wake lock), so switching apps or turning the screen off no longer stops it. Leaving the app's screen doesn't stop it either.
 - **Nothing is lost if a run dies.**

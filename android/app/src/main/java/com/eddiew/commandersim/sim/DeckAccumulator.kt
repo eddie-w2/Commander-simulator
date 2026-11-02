@@ -90,6 +90,8 @@ internal class DeckAccumulator(val deck: Deck) {
     private val lethal = HashMap<String, Int>()
 
     private val cards = LinkedHashMap<String, CardAcc>()
+    /** Damage sources that aren't cards in the list (tokens, e.g. "Soldier token (Merry…)"). */
+    private val extraSources = LinkedHashMap<String, CardAcc>()
 
     private var removalSpells = 0L; private var permsRemoved = 0L; private var received = 0L; private var counters = 0L
     private var wipes = 0L; private var sacrificed = 0L
@@ -219,6 +221,15 @@ internal class DeckAccumulator(val deck: Deck) {
                 ct.removedBy.forEach { (k, v) -> a.removedBy.merge(relabel(k), v, Int::plus) }
                 if (ct.colorLockedTurns > 0) a.lockedGames++
             }
+        }
+
+        for ((name, ct) in t.cards) {
+            if (ct.damage == 0 || name in cards) continue
+            val a = extraSources.getOrPut(name) { CardAcc(CardType.CREATURE, null) }
+            a.damage += ct.damage; a.combat += ct.combatDamage; a.nonCombat += ct.nonCombatDamage
+            a.killShots += ct.killShots
+            ct.dmgBySeat?.forEachIndexed { s, v -> if (v > 0) a.dmgToDeck.merge(seatDeckIds[s], v.toLong(), Long::plus) }
+            ct.dmgByRound?.forEachIndexed { i, v -> a.dmgByRound[i] += v.toLong() }
         }
 
         // ── Opposing cards faced
@@ -367,7 +378,7 @@ internal class DeckAccumulator(val deck: Deck) {
         }
 
         val cmdNames = deck.commanders.map { it.name }.toSet()
-        val sources = cards.filter { it.value.damage > 0 }.entries.sortedByDescending { it.value.damage }.take(15).map { (name, a) ->
+        val sources = (cards + extraSources).filter { it.value.damage > 0 }.entries.sortedByDescending { it.value.damage }.take(15).map { (name, a) ->
             SourceDamage(
                 card = name,
                 perGame = a.damage.toDouble() / games,

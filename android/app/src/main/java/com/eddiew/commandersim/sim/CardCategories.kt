@@ -23,35 +23,19 @@ enum class Category(val label: String, val short: String) {
  * quick model uses, plus protection and recursion). Lands are never categorised.
  */
 object CardCategories {
-    private val protection = listOf(
-        Regex("""(creatures|permanents|artifacts|other creatures) you control (gain|have|get)[^.]{0,60}(hexproof|indestructible|shroud|protection|ward)"""),
-        Regex("""target (creature|permanent|artifact|commander)( or [a-z]+)?( you control)? (gains|has|gets)[^.]{0,60}(hexproof|indestructible|shroud|protection)"""),
-        Regex("""(equipped|enchanted) (creature|permanent) (has|gains|gets [^.]{0,20}and has)[^.]{0,40}(hexproof|indestructible|shroud|protection|ward)"""),
-        Regex("""phases? out"""),
-        Regex("""you have (hexproof|shroud)"""),
-        Regex("""counter target spell or ability an opponent controls that targets"""),
-    )
-    private val recursion = listOf(
-        Regex("""return[^.]{0,80}from (your|a) graveyard to (your hand|the battlefield)"""),
-        Regex("""(put|return)[^.]{0,60}from (your|a|any) graveyard onto the battlefield"""),
-        Regex("""return (target|up to [a-z]+ target|all|each)[^.]{0,40}cards? from your graveyard"""),
-    )
-
     fun of(card: DeckCard, deckColors: Int, commander: Boolean = false): Set<Category> {
         val sim = SimCard.from(card, deckColors, commander)
         if (sim.isLand) return emptySet()
         val r = sim.roles
-        val text = card.oracle.orEmpty().lowercase()
-        val tags = card.tags.orEmpty()
         val out = LinkedHashSet<Category>()
         if (Role.ROCK in r || Role.DORK in r || Role.RAMP_LAND in r) out += Category.RAMP
         if (Role.DRAW in r || Role.ENGINE in r) out += Category.DRAW
         if (Role.REMOVAL in r) out += Category.REMOVAL
         if (Role.WIPE in r) out += Category.WIPE
         if (Role.COUNTER in r) out += Category.COUNTER
-        if ("protection" in tags || protection.any { it.containsMatchIn(text) }) out += Category.PROTECTION
+        if (Role.PROTECTION in r) out += Category.PROTECTION
         if (Role.TUTOR in r) out += Category.TUTOR
-        if ("recursion" in tags || recursion.any { it.containsMatchIn(text) }) out += Category.RECURSION
+        if (Role.RECURSION in r) out += Category.RECURSION
         if (Role.TOKENS in r) out += Category.TOKENS
         if (Role.BURN in r || Role.DRAIN in r) out += Category.BURN
         if (Role.LIFEGAIN in r) out += Category.LIFEGAIN

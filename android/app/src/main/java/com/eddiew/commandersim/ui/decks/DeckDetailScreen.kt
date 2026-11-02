@@ -210,6 +210,7 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
         }
         item { DeckCategoriesPanel(deck) }
         item { ManaBaseView(manaBase, showCurve = false, showRoles = false) }
+        item { QuickModelCoverage(deck) }
         CardType.entries.filter { byType.containsKey(it) }.forEach { type ->
             item {
                 HudPanel(title = "${type.label} · ${byType[type]}") {

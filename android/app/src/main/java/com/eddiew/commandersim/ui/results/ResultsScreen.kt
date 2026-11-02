@@ -105,7 +105,7 @@ private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit, onGam
         if (r.source == "sample") {
             item { Notice("Old sample data from the placeholder model, not your real cards. Run again to use the quick model.") }
         } else if (r.source == "quick") {
-            item { Notice("Quick model: real mana costs, colours and card roles with simplified play. Trust the mana and curve stats; treat win rates as rough and confirm with Forge.", color = Hud.Electric) }
+            item { Notice("Quick model: real costs, colours, power/toughness and the card text it can read (see each deck's coverage). No stack, politics or most combos: confirm close calls with Forge.", color = Hud.Electric) }
         }
         r.notes.forEach { note ->
             item { Notice(note, color = if (note.startsWith("Forge doesn't know") || note.startsWith("Stopped")) Hud.Warn else Hud.Electric) }
