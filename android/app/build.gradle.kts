@@ -13,8 +13,8 @@ android {
         applicationId = "com.eddiew.commandersim"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.02"
+        versionCode = 7
+        versionName = "0.3.01"
     }
 
     signingConfigs {
@@ -92,6 +92,7 @@ val bundleForgePack by tasks.registering {
     val outDir = layout.buildDirectory.dir("generated/forgepack-assets/forge")
     val packApk = rootProject.file("forgepack/build/outputs/apk/release/forgepack-release-unsigned.apk")
     val forgeVersion = rootProject.file("../forge.version")
+    val apiFile = rootProject.file("engine-api/src/main/kotlin/com/eddiew/commandersim/sim/GameTypes.kt")
     inputs.file(packApk)
     inputs.file(forgeVersion)
     outputs.dir(outDir)
@@ -100,7 +101,7 @@ val bundleForgePack by tasks.registering {
         dir.mkdirs()
         packApk.copyTo(dir.resolve("forge-pack.apk"), overwrite = true)
         dir.resolve("bundled.txt").writeText(
-            "forgeCommit=${forgeVersion.readText().trim()}\napiVersion=1\nkotlin=${libs.versions.kotlin.get()}\nsize=${packApk.length()}\n",
+            "forgeCommit=${forgeVersion.readText().trim()}\napiVersion=${Regex("ENGINE_API_VERSION = (\\d+)").find(apiFile.readText())!!.groupValues[1]}\nkotlin=${libs.versions.kotlin.get()}\nsize=${packApk.length()}\n",
         )
     }
 }

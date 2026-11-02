@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.01
+- **Quick model replaces the quick sample.** It now plays your real cards:
+  - Real mana costs and coloured pips, paid from the sources in play. Each land, rock and dork makes its real colours. Tapped lands enter tapped, fetches find your colours, and land ramp puts lands into play.
+  - Land drops pick the land that fixes the colours your hand needs.
+  - Card roles come from Scryfall's functional tags plus rules text: ramp, removal, board wipes, counterspells, card draw and draw engines, tutors, burn/drain, tokens, lifegain, anthems and equipment.
+  - Combat uses real power/toughness and flying, reach, trample, deathtouch, lifelink, haste, menace, double strike and unblockable.
+  - It runs on several cores at once.
+- **New Mana tab** in each deck report (quick model):
+  - Colour availability by turn, per colour and all colours.
+  - Mana sources by turn against a 1-land-per-turn line.
+  - Colour screw, land screw and flood rates.
+  - Commander castable on curve.
+  - Cards most often stuck in hand for colours. Each card's detail screen also shows its "stuck for colours" rate.
+- **Mana base analysis** on the deck screen and in the Mana tab:
+  - Pips vs sources per colour, with rough source targets.
+  - Land, rock, dork and ramp counts, plus tapped lands.
+  - Card role counts.
+  - Warnings when a colour is short.
+- **Richer card data:** decks now store mana cost, produced mana, rules text, P/T, keywords and Scryfall tags. Existing decks update in the background after this update.
+
 ## v0.2.02
 - Fix: the long-press card popup failed with HTTP 400 (Scryfall requires an Accept header).
 

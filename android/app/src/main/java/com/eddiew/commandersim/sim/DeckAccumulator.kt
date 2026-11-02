@@ -15,6 +15,7 @@ import com.eddiew.commandersim.data.model.Insight
 import com.eddiew.commandersim.data.model.InsightKind
 import com.eddiew.commandersim.data.model.LethalSource
 import com.eddiew.commandersim.data.model.LifeStats
+import com.eddiew.commandersim.data.model.ManaStats
 import com.eddiew.commandersim.data.model.NamedValue
 import com.eddiew.commandersim.data.model.NemesisStat
 import com.eddiew.commandersim.data.model.OutcomeStats
@@ -60,6 +61,7 @@ private class CardAcc(val type: CardType, val mv: Double?) {
     val dmgToDeck = HashMap<String, Long>()
     val removedBy = HashMap<String, Int>()
     val dmgByRound = LongArray(MAX_TURNS)
+    var lockedGames = 0
 }
 
 /** Accumulates every game one deck played and builds its [DeckReport]. */
@@ -128,6 +130,18 @@ internal class DeckAccumulator(val deck: Deck) {
 
     private var attacks = 0L; private var attackers = 0L; private var blocks = 0L; private var lost = 0L
     private var tokens = 0L; private var countersPlaced = 0L
+
+    // Mana (quick model only)
+    private val deckColors = deck.colorIdentity.filter { it in "WUBRG" }
+    private var manaGames = 0
+    private val colorAvail = Array(5) { TurnSeries() }
+    private val allColors = TurnSeries()
+    private val sourcesSeries = TurnSeries()
+    private var screwGames = 0; private var screwTurns = 0L
+    private var landScrew = 0; private var landScrewN = 0
+    private var flood = 0; private var floodN = 0
+    private var cmdCurveGames = 0; private var cmdCastableSum = 0L; private var cmdCastableN = 0
+    private val cmdMv = deck.commanders.firstOrNull()?.manaValue?.toInt() ?: 0
 
     // Opposing cards cast in this deck's games: "card|deckId" -> [games, wins]
     private val faced = HashMap<String, IntArray>()
@@ -203,6 +217,7 @@ internal class DeckAccumulator(val deck: Deck) {
                 ct.dmgBySeat?.forEachIndexed { s, v -> if (v > 0) a.dmgToDeck.merge(seatDeckIds[s], v.toLong(), Long::plus) }
                 ct.dmgByRound?.forEachIndexed { i, v -> a.dmgByRound[i] += v.toLong() }
                 ct.removedBy.forEach { (k, v) -> a.removedBy.merge(relabel(k), v, Int::plus) }
+                if (ct.colorLockedTurns > 0) a.lockedGames++
             }
         }
 
@@ -267,6 +282,27 @@ internal class DeckAccumulator(val deck: Deck) {
             sc(8, t.landsPlayed.toDouble()); sc(9, t.counters.toDouble())
         }
 
+        // ── Mana
+        if (t.manaRecorded) {
+            manaGames++
+            val deckMask = ManaColor.mask(deckColors)
+            for (i in 0 until MAX_TURNS) {
+                val c = t.colorsByTurn[i]
+                if (c < 0) continue
+                ManaColor.ORDER.forEachIndexed { k, (_, bit) -> colorAvail[k].add(i, if (c and bit != 0) 1.0 else 0.0) }
+                allColors.add(i, if (c and deckMask == deckMask) 1.0 else 0.0)
+                if (t.sourcesByTurn[i] >= 0) sourcesSeries.add(i, t.sourcesByTurn[i].toDouble())
+            }
+            if (t.colorScrewTurns > 0) screwGames++
+            screwTurns += t.colorScrewTurns
+            t.landsInPlayByTurn[3].takeIf { it >= 0 }?.let { landScrewN++; if (it < 3) landScrew++ }
+            t.landsDrawnBy8.takeIf { it >= 0 }?.let { floodN++; if (it >= 9) flood++ }
+            if (t.cmdCastableTurn > 0) {
+                cmdCastableSum += t.cmdCastableTurn; cmdCastableN++
+                if (t.cmdCastableTurn <= cmdMv.coerceAtLeast(1)) cmdCurveGames++
+            }
+        }
+
         // ── Commander
         cmdCasts += t.cmdCasts
         if (t.cmdFirstCast > 0) { cmdFirstSum += t.cmdFirstCast; cmdFirstN++ } else { cmdNeverGames++; if (won) cmdNeverWins++ }
@@ -326,6 +362,7 @@ internal class DeckAccumulator(val deck: Deck) {
                 removalsPerGame = a.removals.toDouble() / games,
                 removedRate = if (a.casts > 0) a.removed.toDouble() / a.casts else 0.0,
                 removedBy = a.removedBy.entries.sortedByDescending { it.value }.take(8).map { NamedValue(it.key, it.value.toDouble()) },
+                colorLockedRate = if (manaGames > 0 && a.seenGames > 0) a.lockedGames.toDouble() / a.seenGames else null,
             )
         }
 
@@ -427,6 +464,24 @@ internal class DeckAccumulator(val deck: Deck) {
                 tokensPerGame = per(tokens), countersPerGame = per(countersPlaced),
             ),
             life = lifeStats, winLoss = split, threats = threats, insights = emptyList(),
+            mana = if (manaGames > 0) ManaStats(
+                colorByTurn = deckColors.associate { ch ->
+                    ch.toString() to colorAvail[ManaColor.ORDER.indexOfFirst { it.first == ch }].mean()
+                },
+                allColorsByTurn = allColors.mean(),
+                sourcesByTurn = sourcesSeries.mean(),
+                colorScrewRate = screwGames.toDouble() / manaGames,
+                avgColorScrewTurns = screwTurns.toDouble() / manaGames,
+                landScrewRate = if (landScrewN > 0) landScrew.toDouble() / landScrewN else 0.0,
+                floodRate = if (floodN > 0) flood.toDouble() / floodN else 0.0,
+                commanderManaValue = cmdMv,
+                commanderOnCurveRate = if (deck.commanders.isNotEmpty()) cmdCurveGames.toDouble() / manaGames else null,
+                avgCommanderCastableTurn = if (cmdCastableN > 0) cmdCastableSum.toDouble() / cmdCastableN else null,
+                colorLocked = cards.filter { it.value.seenGames >= 10 && it.value.lockedGames > 0 }
+                    .map { NamedValue(it.key, it.value.lockedGames.toDouble() / it.value.seenGames) }
+                    .sortedByDescending { it.value }.take(12),
+                base = ManaBase.analyze(deck),
+            ) else null,
         )
         return report.copy(insights = insights(report, deckNames))
     }
@@ -459,6 +514,15 @@ internal class DeckAccumulator(val deck: Deck) {
         d.damage.lethalAgainstUs.firstOrNull()?.let {
             out += Insight(InsightKind.INFO, "Most common way you die",
                 "${it.card} (${names[it.deckId] ?: "opponent"}) dealt the final blow ${it.count} times.")
+        }
+        d.mana?.let { m ->
+            if (m.colorScrewRate >= 0.25) out += Insight(InsightKind.BAD, "Colour problems",
+                "In ${"%.0f".format(m.colorScrewRate * 100)}% of games a spell sat in hand with enough mana but the wrong colours.")
+            m.colorLocked.firstOrNull()?.takeIf { it.value >= 0.25 }?.let {
+                out += Insight(InsightKind.BAD, "${it.name} is hard to cast", "Stuck for colours in ${"%.0f".format(it.value * 100)}% of games it was drawn.")
+            }
+            if (m.landScrewRate >= 0.25) out += Insight(InsightKind.BAD, "Missing land drops",
+                "Fewer than 3 lands on turn 4 in ${"%.0f".format(m.landScrewRate * 100)}% of games.")
         }
         val early = d.commanderStats.winRateWhenCastByT5
         val never = d.commanderStats.winRateWhenNeverCast

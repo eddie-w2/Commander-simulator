@@ -9,7 +9,7 @@ import com.eddiew.commandersim.data.model.EndCondition
  */
 
 /** Packs built against a different value are not loaded. */
-const val ENGINE_API_VERSION = 1
+const val ENGINE_API_VERSION = 2
 
 /** Per-round series length. */
 const val MAX_TURNS = 20
@@ -27,6 +27,8 @@ class CardTrack : java.io.Serializable {
     var removals = 0
     var removed = 0
     var countered = 0
+    /** Turns this card sat in hand with enough mana but not the right colours (quick model). */
+    var colorLockedTurns = 0
     var dmgBySeat: IntArray? = null
     var dmgByRound: IntArray? = null
     val removedBy = HashMap<String, Int>() // "card|seat"
@@ -92,6 +94,19 @@ class PlayerTrack(val seats: Int) : java.io.Serializable {
     val creaturesByTurn = IntArray(MAX_TURNS) { -1 }
     var tokens = 0
     var counterPlaced = 0
+
+    /** Colour bits (W=1 U=2 B=4 R=8 G=16) the player could make at each of their turns; -1 = not recorded. */
+    val colorsByTurn = IntArray(MAX_TURNS) { -1 }
+    /** Mana sources (lands, rocks, dorks) in play at each turn; -1 = not recorded. */
+    val sourcesByTurn = IntArray(MAX_TURNS) { -1 }
+    /** Turns (in the first 8) where a spell in hand was affordable but not in the right colours. */
+    var colorScrewTurns = 0
+    /** First of the player's turns the commander could be paid for; -1 = never or not recorded. */
+    var cmdCastableTurn = -1
+    /** Lands drawn (opening hand included) by the player's 8th turn; -1 = not recorded. */
+    var landsDrawnBy8 = -1
+    /** True when the colour/mana fields above were recorded (quick model). */
+    var manaRecorded = false
 
     var place = 0
     var eliminatedTurn = -1

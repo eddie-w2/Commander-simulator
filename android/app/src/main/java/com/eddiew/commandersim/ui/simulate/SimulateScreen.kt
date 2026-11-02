@@ -134,17 +134,17 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     HudChip("Forge engine", forge, { if (vm.forgeAvailable) vm.setEngine(SimEngine.FORGE) }, Modifier.weight(1f),
                         color = if (vm.forgeAvailable) Hud.Cyan else Hud.Dim)
-                    HudChip("Quick sample", !forge, { vm.setEngine(SimEngine.SAMPLE) }, Modifier.weight(1f))
+                    HudChip("Quick model", !forge, { vm.setEngine(SimEngine.SAMPLE) }, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
                     when {
                         forge -> "Real Magic rules and Forge's AI, run on this phone. Expect roughly 10–60 seconds per 4-player game, " +
                             "so start small. You can stop at any time and keep the results so far."
-                        vm.forgeAvailable -> "A simplified model, for trying out the dashboards quickly. Its results don't reflect your real decks."
-                        else -> "This build doesn't include the Forge engine; only the simplified sample model is available."
+                        else -> "Uses your cards' real costs, colours and roles (from Scryfall) with simplified play. Thousands of games in seconds: " +
+                            "good for testing the mana base, colours and curve; win rates are rough."
                     },
-                    style = MaterialTheme.typography.bodySmall, color = if (forge) Hud.Ice else Hud.Dim,
+                    style = MaterialTheme.typography.bodySmall, color = Hud.Ice,
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

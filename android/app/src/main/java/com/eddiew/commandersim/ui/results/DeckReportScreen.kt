@@ -65,7 +65,7 @@ import com.eddiew.commandersim.ui.theme.Mono
 
 private enum class ReportTab(val label: String) {
     OVERVIEW("Overview"), DAMAGE("Damage"), CARDS("Cards"), WINLOSS("Wins vs losses"), THREATS("Threats"),
-    REMOVAL("Removal"), RESOURCES("Resources"), COMBAT("Combat & board")
+    REMOVAL("Removal"), RESOURCES("Resources"), MANA("Mana"), COMBAT("Combat & board")
 }
 
 @Composable
@@ -112,6 +112,7 @@ fun DeckReportScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onCar
                 ReportTab.THREATS -> threats(r, d)
                 ReportTab.REMOVAL -> removal(r, d, onCard, onMetric)
                 ReportTab.RESOURCES -> resources(d, onMetric)
+                ReportTab.MANA -> manaTab(d)
                 ReportTab.COMBAT -> combat(d, onMetric)
             }
         }

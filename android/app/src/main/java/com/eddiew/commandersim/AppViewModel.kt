@@ -146,6 +146,10 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         if (autoLoad) viewModelScope.launch {
             decksRepo.load()
             reportRepo.load()
+            // Bring decks imported before the current card data level up to date, one at a time.
+            launch {
+                for (d in decksRepo.decks.value.filter { it.dataLevel < com.eddiew.commandersim.data.model.CARD_DATA_LEVEL }) enrich(d)
+            }
             val saved = withContext(Dispatchers.IO) {
                 runCatching { AppJson.decodeFromString(SimSettings.serializer(), settingsFile.readText()) }.getOrNull()
             }
@@ -241,7 +245,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
             decksRepo.upsert(deck)
             decksRepo.snapshot(deck, "Imported")
             updateSettings { it.copy(pool = it.pool + deck.id) }
-            if (!deck.enriched) enrich(deck)
+            enrich(deck)
         }
         return deck.id
     }
@@ -268,7 +272,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         viewModelScope.launch {
             decksRepo.upsert(variant)
             updateSettings { it.copy(mode = SimMode.AB, aId = base.id, bId = variant.id) }
-            if (!variant.enriched) enrich(variant)
+            enrich(variant)
         }
         return variant.id
     }
@@ -280,10 +284,19 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     private suspend fun enrich(deck: Deck) {
         _syncing.update { it + deck.id }
         try {
-            val info = scryfall.lookup((deck.commanders + deck.cards).map { it.name })
-            fun fix(list: List<DeckCard>) = list.map { ScryfallClient.apply(it, info) }
+            val names = (deck.commanders + deck.cards).map { it.name }
+            val info = scryfall.lookup(names)
+            // Functional tags (removal, ramp…) are best effort: a failure here still saves the card data.
+            val tags = runCatching { scryfall.tags(names) }.getOrDefault(emptyMap())
+            fun fix(list: List<DeckCard>) = list.map { c ->
+                val e = ScryfallClient.apply(c, info)
+                val t = tags[e.name.lowercase()] ?: tags[c.name.lowercase()]
+                e.copy(tags = t?.sorted() ?: e.tags ?: emptyList())
+            }
             val latest = decks.value.firstOrNull { it.id == deck.id } ?: deck
-            decksRepo.upsert(latest.copy(commanders = fix(latest.commanders), cards = fix(latest.cards), enriched = true))
+            decksRepo.upsert(
+                latest.copy(commanders = fix(latest.commanders), cards = fix(latest.cards), enriched = true, dataLevel = com.eddiew.commandersim.data.model.CARD_DATA_LEVEL),
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -342,7 +355,7 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
             val changed = diff.added.isNotEmpty() || diff.removed.isNotEmpty()
             if (changed) decksRepo.snapshot(d, "Before sync")
             decksRepo.upsert(if (changed) updated else d.copy(syncedAt = updated.syncedAt))
-            if (changed && !updated.enriched) enrich(updated)
+            if (changed) enrich(updated)
             return SyncResult(d.name, changed, diff.added.sumOf { it.quantity }, diff.removed.sumOf { it.quantity })
         } catch (e: CancellationException) {
             throw e

@@ -212,7 +212,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
 
             HudPanel(title = "About") {
                 Text("Version $version", style = MaterialTheme.typography.bodyMedium, color = Hud.Text)
-                Text("Simulation engine: on-device sample model (Forge server coming).", style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
+                Text("Engines: Forge (full rules) and the quick model (mana and curve), both on this phone.", style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
                 Text("Card data from Scryfall.", style = MaterialTheme.typography.bodySmall, color = Hud.Muted)
             }
             Spacer(Modifier.height(16.dp))

@@ -12,6 +12,17 @@ data class DeckCard(
     val typeLine: String? = null,
     val manaValue: Double? = null,
     val colors: String? = null,
+    // Filled in by the v0.3 card data sync (Scryfall); used by the quick model and the mana base analysis.
+    /** e.g. "{2}{G}{G}"; front face for double-faced cards. */
+    val manaCost: String? = null,
+    /** Colours of mana the card can make, e.g. "GW" (C = colourless). Lands, rocks, dorks. */
+    val produces: String? = null,
+    val oracle: String? = null,
+    val power: String? = null,
+    val toughness: String? = null,
+    val keywords: List<String>? = null,
+    /** Scryfall functional tags found for this card (removal, ramp, counterspell…). */
+    val tags: List<String>? = null,
 ) {
     val type: CardType get() = CardType.fromTypeLine(typeLine)
 }
@@ -32,6 +43,8 @@ data class Deck(
     val owned: Boolean = false,
     /** When the deck was last synced from [sourceUrl]. */
     val syncedAt: Long? = null,
+    /** Which card data sync this deck has had; below [CARD_DATA_LEVEL] it's refreshed in the background. */
+    val dataLevel: Int = 0,
 ) {
     val cardCount: Int get() = commanders.sumOf { it.quantity } + cards.sumOf { it.quantity }
     val commanderLabel: String get() = commanders.joinToString(" + ") { it.name }.ifEmpty { "No commander" }
@@ -41,6 +54,9 @@ data class Deck(
             return "WUBRG".filter { it in all }.ifEmpty { if (commanders.any { it.colors != null }) "C" else "" }
         }
 }
+
+/** Current card data level: 2 = mana costs, produced mana, rules text and functional tags. */
+const val CARD_DATA_LEVEL = 2
 
 /** Cards removed and added going from [base] to [variant], by name (quantities included). */
 data class DeckDiff(val removed: List<DeckCard>, val added: List<DeckCard>)

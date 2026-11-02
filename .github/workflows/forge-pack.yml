@@ -35,10 +35,12 @@ jobs:
         run: |
           SHA=$(git ls-remote https://github.com/Card-Forge/forge.git refs/heads/master | cut -f1)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          API=$(grep -oP 'ENGINE_API_VERSION = \K\d+' android/engine-api/src/main/kotlin/com/eddiew/commandersim/sim/GameTypes.kt)
           PUBLISHED=$(gh release download forge-pack --repo "$GITHUB_REPOSITORY" --pattern manifest.json --output - 2>/dev/null \
-            | python3 -c "import json,sys; print(json.load(sys.stdin).get('forgeCommit',''))" 2>/dev/null || true)
-          echo "Forge master: $SHA, published: ${PUBLISHED:-none}"
-          if [ "$SHA" = "$PUBLISHED" ] && [ "${{ inputs.force }}" != "true" ]; then
+            | python3 -c "import json,sys; m=json.load(sys.stdin); print(m.get('forgeCommit',''), m.get('apiVersion',''))" 2>/dev/null || true)
+          echo "Forge master: $SHA (API $API), published: ${PUBLISHED:-none}"
+          # Rebuild when Forge moves or the app's engine API changes.
+          if [ "$SHA $API" = "$PUBLISHED" ] && [ "${{ inputs.force }}" != "true" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 

@@ -27,7 +27,7 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * On-device sample simulator built on [ToyGame]. Produces every field of the report.
+ * On-device simulator; by default plays the quick model ([QuickGame]). Produces every field of the report.
  *
  * Pool mode: every selected deck plays the others in balanced 4-player pods.
  * A/B mode: deck A and deck B each play the same pods against the field, with the same shuffle seed per game,
@@ -41,7 +41,7 @@ class SampleSimulator internal constructor(
     private val notes: () -> List<String> = { emptyList() },
 ) : SimulationService {
 
-    constructor(seed: Long = System.currentTimeMillis()) : this(seed, ToyGamePlayer(), "sample")
+    constructor(seed: Long = System.currentTimeMillis()) : this(seed, QuickGamePlayer(), "quick")
 
     override suspend fun run(config: SimConfig, decks: List<Deck>, control: SimControl, onProgress: (Float) -> Unit): SimulationReport =
         withContext(Dispatchers.Default) {

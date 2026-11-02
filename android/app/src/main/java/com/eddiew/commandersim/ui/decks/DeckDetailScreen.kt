@@ -46,6 +46,8 @@ import com.eddiew.commandersim.ui.components.TileRow
 import com.eddiew.commandersim.ui.components.num
 import com.eddiew.commandersim.ui.components.cardPress
 import com.eddiew.commandersim.ui.theme.Hud
+import com.eddiew.commandersim.sim.ManaBase
+import com.eddiew.commandersim.ui.results.ManaBaseView
 
 @Composable
 fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVariant: (String) -> Unit, onRunAb: () -> Unit) {
@@ -68,6 +70,7 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
     }
 
     val all = deck.commanders + deck.cards
+    val manaBase = remember(deck) { ManaBase.analyze(deck) }
     val byType = all.groupBy { it.type }.mapValues { (_, v) -> v.sumOf { it.quantity } }
     val nonLand = all.filter { it.type != CardType.LAND && it.manaValue != null }
     val curve = List(8) { mv -> nonLand.filter { minOf(it.manaValue!!.toInt(), 7) == mv }.sumOf { it.quantity }.toDouble() }
@@ -202,6 +205,7 @@ fun DeckDetailScreen(vm: AppViewModel, deckId: String, onBack: () -> Unit, onVar
                 }
             }
         }
+        item { ManaBaseView(manaBase, showCurve = false) }
         CardType.entries.filter { byType.containsKey(it) }.forEach { type ->
             item {
                 HudPanel(title = "${type.label} · ${byType[type]}") {

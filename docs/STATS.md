@@ -97,6 +97,22 @@ Win/loss conditions: `COMBAT_DAMAGE`, `COMMANDER_DAMAGE`, `NONCOMBAT_DAMAGE`, `L
 | Mana spent per round | `avgManaSpentByTurn` | sum of the mana value of spells cast (approximation) |
 | Mulligans | `mulliganRate`, `avgMulligans` | `GameEventMulligan` |
 
+## Mana & colours (quick model)
+Recorded only by the quick model (`sim/QuickGame.kt`); Forge reports leave `mana` empty. Card data comes from Scryfall: mana cost, produced mana, rules text, power/toughness, keywords and functional tags (`otag:` removal, counterspell, ramp, mana-rock, mana-dork, draw, card-advantage, sweeper, board-wipe, tutor, burn, lifegain).
+
+| Stat | Field | Source |
+|---|---|---|
+| Colour available by turn, per colour and all colours | `mana.colorByTurn`, `allColorsByTurn` | colours the untapped and tapped sources in play can make, after the land drop |
+| Mana sources in play by turn | `mana.sourcesByTurn` | lands + rocks + dorks |
+| Colour screw | `colorScrewRate`, `avgColorScrewTurns` | turns 1–8 where a spell in hand cost no more than the available mana but couldn't be paid for colours |
+| Land screw | `landScrewRate` | fewer than 3 lands in play on turn 4 |
+| Flood | `floodRate` | 9+ lands drawn by turn 8, opening hand included |
+| Commander on curve, castable turn | `commanderOnCurveRate`, `avgCommanderCastableTurn` | first turn the commander's cost (with tax) could be paid |
+| Stuck for colours (per card) | `colorLocked`, `cards[].colorLockedRate` | share of games drawn where the card was colour-locked at least one turn |
+| Mana base (static) | `mana.base` | from the list: pips per colour vs sources per colour, lands / rocks / dorks / land ramp, tapped lands, card roles, curve, warnings. Also on the deck screen. |
+
+Source targets in `mana.base` are a rough rule of thumb (about 12 sources for single-pip cards, 18 for double, 22 for triple), not a precise calculation.
+
 ## Commander
 | Stat | Field | Source |
 |---|---|---|

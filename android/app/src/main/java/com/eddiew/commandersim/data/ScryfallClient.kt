@@ -31,6 +31,12 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
         val colorIdentity: String,
         val canBeCommander: Boolean = false,
         val partner: Boolean = false,
+        val manaCost: String? = null,
+        val produces: String? = null,
+        val oracle: String? = null,
+        val power: String? = null,
+        val toughness: String? = null,
+        val keywords: List<String> = emptyList(),
     ) {
         fun facts() = DeckParser.CardFacts(colorIdentity, canBeCommander, partner)
     }
@@ -71,7 +77,18 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
         val canLead = ("Legendary" in front && "Creature" in front) || oracle.contains("can be your commander", ignoreCase = true)
         val partner = keywords.any { it.startsWith("partner") || it == "friends forever" || it == "doctor's companion" } ||
             oracle.contains("Choose a Background", ignoreCase = true) || "Background" in front
-        return CardInfo(name, typeLine, cmc, identity, canLead || "Background" in front, partner)
+        fun str(o: JsonObject, k: String) = runCatching { o[k]?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val front0 = faces.firstOrNull()
+        val produced = obj["produced_mana"]?.jsonArray?.joinToString("") { it.jsonPrimitive.content }
+        return CardInfo(
+            name, typeLine, cmc, identity, canLead || "Background" in front, partner,
+            manaCost = str(obj, "mana_cost")?.takeIf { it.isNotBlank() } ?: front0?.let { str(it, "mana_cost") },
+            produces = produced,
+            oracle = oracle.ifBlank { null },
+            power = str(obj, "power") ?: front0?.let { str(it, "power") },
+            toughness = str(obj, "toughness") ?: front0?.let { str(it, "toughness") },
+            keywords = keywords,
+        )
     }
 
     private fun post(url: String, body: String): String {
@@ -102,7 +119,50 @@ class ScryfallClient(private val json: Json = Json { ignoreUnknownKeys = true })
                 typeLine = hit.typeLine,
                 manaValue = hit.manaValue,
                 colors = hit.colorIdentity,
+                manaCost = hit.manaCost,
+                produces = hit.produces,
+                oracle = hit.oracle,
+                power = hit.power,
+                toughness = hit.toughness,
+                keywords = hit.keywords,
             )
         }
+
+        /** Scryfall functional tags we look up, mapped to the quick model's roles. */
+        val TAGS = linkedMapOf(
+            "removal" to "removal", "counterspell" to "counter", "ramp" to "ramp", "mana-rock" to "ramp",
+            "mana-dork" to "ramp", "draw" to "draw", "card-advantage" to "draw", "sweeper" to "wipe",
+            "board-wipe" to "wipe", "tutor" to "tutor", "burn" to "burn", "lifegain" to "lifegain",
+        )
+    }
+
+    /**
+     * Which of [names] carry each Scryfall functional tag (Tagger "otag:"), as card name (lowercase) → roles.
+     * A tag Scryfall doesn't recognise just finds nothing; network errors leave the result partial.
+     */
+    suspend fun tags(names: List<String>): Map<String, Set<String>> = withContext(Dispatchers.IO) {
+        val out = HashMap<String, MutableSet<String>>()
+        val unique = names.distinct()
+        for ((tag, role) in TAGS) {
+            for (chunk in unique.chunked(25)) {
+                val q = "otag:$tag (" + chunk.joinToString(" or ") { "!\"" + it.replace("\"", "") + "\"" } + ")"
+                var url: String? = "https://api.scryfall.com/cards/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")
+                var pages = 0
+                while (url != null && pages < 3) {
+                    val body = runCatching { httpGet(url) }.getOrNull() ?: break
+                    val root = json.parseToJsonElement(body).jsonObject
+                    root["data"]?.jsonArray?.forEach { el ->
+                        val n = el.jsonObject["name"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                        out.getOrPut(n.lowercase()) { mutableSetOf() } += role
+                        out.getOrPut(n.substringBefore(" // ").lowercase()) { mutableSetOf() } += role
+                    }
+                    url = if (root["has_more"]?.jsonPrimitive?.contentOrNull == "true") root["next_page"]?.jsonPrimitive?.contentOrNull else null
+                    pages++
+                    delay(110)
+                }
+                delay(110)
+            }
+        }
+        out
     }
 }

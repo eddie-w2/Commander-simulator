@@ -78,7 +78,9 @@ private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit, onGam
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (r.source == "sample") {
-            item { Notice("Sample data from the simplified on-device model, not Forge. Use it to explore the dashboards; don't pick a deck from it yet.") }
+            item { Notice("Old sample data from the placeholder model, not your real cards. Run again to use the quick model.") }
+        } else if (r.source == "quick") {
+            item { Notice("Quick model: real mana costs, colours and card roles with simplified play. Trust the mana and curve stats; treat win rates as rough and confirm with Forge.", color = Hud.Electric) }
         }
         r.notes.forEach { note ->
             item { Notice(note, color = if (note.startsWith("Forge doesn't know") || note.startsWith("Stopped")) Hud.Warn else Hud.Electric) }

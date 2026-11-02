@@ -91,6 +91,16 @@ fun CardDetailScreen(vm: AppViewModel, deckId: String, cardName: String, onBack:
                     accent = Hud.Cyan,
                 )
             }
+            c.colorLockedRate?.let { locked ->
+                item {
+                    TileRow(
+                        Triple("Stuck for colours", pct(locked, 0), "of games drawn"),
+                        Triple("Countered", pct(c.counteredRate, 0), "of casts"),
+                        Triple("Removed", pct(c.removedRate, 0), "of casts"),
+                        accent = if (locked >= 0.25) Hud.Warn else Hud.Electric,
+                    )
+                }
+            }
             item {
                 val last = (c.castTurnHistogram.indexOfLast { it > 0 } + 1).coerceAtLeast(6)
                 HudPanel(title = "Round first cast") {

@@ -80,6 +80,8 @@ data class DeckReport(
     val winLoss: WinLossSplit,
     val threats: ThreatStats,
     val insights: List<Insight>,
+    /** Mana and colour stats; only from engines that record them (the quick model). */
+    val mana: ManaStats? = null,
 ) {
     fun card(name: String): CardStat? = cards.firstOrNull { it.name == name }
 }
@@ -186,6 +188,8 @@ data class CardStat(
     val removedRate: Double,
     /** Opposing cards that removed this card, total count ("Card|deckId"). */
     val removedBy: List<NamedValue>,
+    /** Share of games where it was drawn that it sat in hand affordable but missing a colour (quick model only). */
+    val colorLockedRate: Double? = null,
 ) {
     /** Win-rate swing when this card gets cast. Positive = the deck wins more when it resolves. */
     val impact: Double?
@@ -372,3 +376,66 @@ data class AbComparison(
 ) {
     val significant: Boolean get() = diffLow > 0 || diffHigh < 0
 }
+
+/** One colour of a deck's mana base. */
+@Serializable
+data class ColorLine(
+    /** "W", "U", "B", "R" or "G". */
+    val color: String,
+    /** Coloured pips of this colour across the deck (hybrid pips count for each colour). */
+    val pips: Int,
+    val pipShare: Double,
+    /** Lands, rocks and dorks that can make this colour. */
+    val sources: Int,
+    val landSources: Int,
+    val sourceShare: Double,
+    /** Cards with at least one pip of this colour. */
+    val cards: Int,
+    /** Most pips of this colour on one card. */
+    val heaviest: Int,
+    /** Rough source target for [heaviest]. */
+    val suggested: Int,
+)
+
+/** Static analysis of a deck list's mana. */
+@Serializable
+data class ManaBaseStats(
+    val colors: List<ColorLine>,
+    val lands: Int,
+    val rocks: Int,
+    val dorks: Int,
+    val rampSpells: Int,
+    val tappedLands: Int,
+    val avgManaValue: Double,
+    /** Non-land cards by mana value 0..7+ (commanders excluded). */
+    val curve: List<Int>,
+    /** Card counts by role (ramp, draw, removal…). */
+    val roles: List<NamedValue>,
+    val warnings: List<String>,
+    val dataComplete: Boolean,
+)
+
+/** Simulated mana: how often the deck had its colours and its mana. */
+@Serializable
+data class ManaStats(
+    /** Colour letter → share of games that colour was available at each of the deck's turns. */
+    val colorByTurn: Map<String, List<Double>>,
+    /** Share of games with every deck colour available, by turn. */
+    val allColorsByTurn: List<Double>,
+    /** Avg mana sources in play (lands, rocks, dorks) by turn. */
+    val sourcesByTurn: List<Double>,
+    /** Games with at least one turn (in the first 8) where an affordable spell was stuck for colours. */
+    val colorScrewRate: Double,
+    val avgColorScrewTurns: Double,
+    /** Games with fewer than 3 lands on turn 4. */
+    val landScrewRate: Double,
+    /** Games that drew 9+ lands by turn 8 (opening hand included): flooding. */
+    val floodRate: Double,
+    val commanderManaValue: Int,
+    /** Commander castable by the turn equal to its mana value. */
+    val commanderOnCurveRate: Double?,
+    val avgCommanderCastableTurn: Double?,
+    /** Cards most often stuck in hand for colours (share of games drawn). */
+    val colorLocked: List<NamedValue>,
+    val base: ManaBaseStats,
+)
