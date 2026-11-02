@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.2.02
+- Fix: the long-press card popup failed with HTTP 400 (Scryfall requires an Accept header).
+
 ## v0.2.01
 - **Forge engine packs:** Forge now ships as a separate "engine pack" (Forge's engine + card data). A daily GitHub job builds Forge's latest code, and the pack is published only if a real smoke game passes. The app checks for a new pack at every launch and asks before downloading it. Settings → Forge engine shows the installed engine, can check now, and can switch back to an earlier or the built-in engine. App updates are no longer needed for Forge updates.
 - **Faster Forge:**

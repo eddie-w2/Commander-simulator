@@ -4,7 +4,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-private const val UA = "CommanderSim-Android"
+private const val UA = "CommanderSim/0.2 (Android; github.com/eddie-w2/Commander-simulator)"
 
 /** Opens a GET connection, following redirects (GitHub sends downloads to its file CDN). */
 private fun open(url: String, accept: String? = null, readTimeout: Int = 30_000): HttpURLConnection {
@@ -15,7 +15,8 @@ private fun open(url: String, accept: String? = null, readTimeout: Int = 30_000)
         c.connectTimeout = 15_000
         c.readTimeout = readTimeout
         c.setRequestProperty("User-Agent", UA)
-        if (accept != null) c.setRequestProperty("Accept", accept)
+        // Scryfall rejects requests without an Accept header (HTTP 400).
+        c.setRequestProperty("Accept", accept ?: "application/json;q=0.9,*/*;q=0.8")
         val code = c.responseCode
         if (code in 300..399) {
             u = URL(u, c.getHeaderField("Location"))

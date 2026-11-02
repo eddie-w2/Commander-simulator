@@ -13,8 +13,8 @@ android {
         applicationId = "com.eddiew.commandersim"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.2.01"
+        versionCode = 6
+        versionName = "0.2.02"
     }
 
     signingConfigs {
