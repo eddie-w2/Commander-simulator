@@ -108,7 +108,7 @@ private fun ResultsBody(r: SimulationReport, onOpenDeck: (String) -> Unit, onGam
             item { Notice("Quick model: real costs, colours, power/toughness and the card text it can read (see each deck's coverage). No stack, politics or most combos: confirm close calls with Forge.", color = Hud.Electric) }
         }
         r.notes.forEach { note ->
-            item { Notice(note, color = if (note.startsWith("Forge doesn't know") || note.startsWith("Stopped")) Hud.Warn else Hud.Electric) }
+            item { Notice(note, color = if (note.startsWith("Forge doesn't know") || note.startsWith("Stopped") || note.startsWith("Check:")) Hud.Warn else Hud.Electric) }
         }
         val ab = r.ab
         if (ab != null) {

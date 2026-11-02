@@ -12,4 +12,6 @@ internal interface GamePlayer {
     val parallelism: Int get() = 1
     /** Called when the simulation ends. */
     fun close() {}
+    /** Notes for the report (coverage, flags). */
+    fun notes(): List<String> = emptyList()
 }

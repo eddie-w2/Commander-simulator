@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.3.07
+Quick model accuracy, round 2. It still plays about 1,700 games a second on one desktop core.
+- **Mana:**
+  - Sources make their real amount: Sol Ring and Ancient Tomb make 2, "Add {G} for each creature" (Gaea's Cradle) and "for each Swamp" (Cabal Coffers, net of its cost) scale with the board.
+  - Cost reducers ("spells you cast cost {1} less") apply.
+  - X spells spend the spare mana on X.
+- **Tutors find the right card:**
+  - A missing combo piece first, then mana when you're short on lands, then an answer when you're behind, then the strongest card castable soon.
+  - They respect type and mana-value limits ("creature card with mana value X or less").
+  - They put the card where the text says: hand, top of library, battlefield, or graveyard (Entomb sets up reanimation).
+- **New ways to win:**
+  - Poison: infect, toxic, "gets a poison counter", proliferate.
+  - Milling: opponents lose when they draw from an empty library.
+  - Extra turns and extra combats (capped so loops can't run away).
+  - "You win the game" cards: Laboratory Maniac / Jace (empty library), Thassa's Oracle, and life-total wins like Felidar Sovereign.
+  - **Known combos:** about 30 well-known two- and three-card wins (Thoracle + Consultation, Kiki-Jiki + Conscripts/Pestermite, Exquisite Blood + Sanguine Bond, Heliod + Ballista, Isochron + Reversal…). A deck that has every piece in play or castable that turn wins unless the last piece is countered. Pieces that only work at combo time are held in hand.
+- **More card types:**
+  - Planeswalkers use their loyalty abilities.
+  - Sagas advance a chapter each turn.
+  - Modal spells use one mode, not all of them.
+  - Equipment re-equips onto your best creature and grants its keywords; auras go to the graveyard with their creature.
+  - Clones and token copies copy the best creature.
+  - Combat tricks are held and cast when they win a fight.
+  - Fight and -X/-X removal work.
+  - Sacrifice outlets use small tokens (aristocrats triggers fire).
+  - "For each" and devotion amounts are counted (Gray Merchant drains, and gains, your devotion).
+- **Smarter casting:** each turn it picks the set of spells that uses its mana best, not just the single highest-priority spell.
+- **Sanity flags** marked "Check:" on results:
+  - lopsided win rates
+  - one card dealing most of a deck's final blows
+  - many games reaching the round limit
+  - decks the model reads poorly
+- Results also list each deck's card coverage and the combos it can win with.
+
 ## v0.3.06
 - **Fix: tokens.** Tokens were played as copies of the card that made them, so a commander that makes tokens (Merry, Warden of Isengard) was credited with every token's damage. That damage also counted as commander damage. Now:
   - Each token is its own creature with its real size and keywords (e.g. 1/1 Soldier with lifelink).

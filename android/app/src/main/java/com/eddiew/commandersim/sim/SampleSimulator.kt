@@ -86,13 +86,15 @@ class SampleSimulator internal constructor(
             val extra = buildList {
                 if (run.resumedGames > 0 && !replayOnly) add("Resumed: ${run.resumedGames} games came from the interrupted run.")
                 run.abortReason?.let { add("Stopped after repeated failures ($it). Played games are kept; resume from Simulate to finish.") }
-                addAll(notes())
+                val playerNotes = player.notes()
+                addAll((notes() + playerNotes.filterNot { it.startsWith("Check:") }).distinct())
                 if (run.adjudicated > 0) add("${run.adjudicated} of ${run.games} games reached the round limit and were scored on life and board.")
                 if (run.failed > 0) add("${run.failed} games failed and were skipped (${run.firstError}).")
                 if (control.stopRequested && run.abortReason == null && run.games < run.planned)
                     add("Stopped after ${run.games} of ${run.planned} games; results are less certain.")
             }
-            run.report(comparison, ab?.let { listOf(it.aId to "A", it.bId to "B") }?.toMap() ?: emptyMap()).copy(notes = extra)
+            val report = run.report(comparison, ab?.let { listOf(it.aId to "A", it.bId to "B") }?.toMap() ?: emptyMap())
+            report.copy(notes = extra + sanityChecks(report, run.adjudicated, player.notes()))
         }
 
     private class PairAcc {
@@ -299,6 +301,28 @@ class SampleSimulator internal constructor(
     }
 
     companion object {
+        /**
+         * Flags results that look more like a model gap than a real finding, so they're read with care.
+         * Every flag starts with "Check:".
+         */
+        internal fun sanityChecks(r: SimulationReport, adjudicated: Int, playerNotes: List<String>): List<String> = buildList {
+            val seats = minOf(r.config.podSize, if (r.ab != null) r.decks.size - 1 else r.decks.size).coerceAtLeast(2)
+            val even = 1.0 / seats
+            for (d in r.decks) {
+                val o = d.outcome
+                if (o.games >= 40 && o.ci95Low > 0.75) add("Check: ${d.name} won ${"%.0f".format(o.winRate * 100)}% of its games (an even share is ${"%.0f".format(even * 100)}%). " +
+                    "Results this lopsided usually mean something about the other decks isn't being played; look at their card coverage.")
+                if (o.games >= 40 && o.ci95High < even / 4) add("Check: ${d.name} almost never wins (${"%.0f".format(o.winRate * 100)}%). Look at its card coverage and its mana tab.")
+                val kills = d.damage.killsPerGame * o.games
+                val top = d.damage.sources.maxByOrNull { it.killShots }
+                if (top != null && kills >= 20 && top.killShots > kills * 0.6) add("Check: ${top.card} dealt ${"%.0f".format(top.killShots * 100 / kills)}% of ${d.name}'s final blows. " +
+                    "If that card isn't the deck's real win condition, the model may be overrating it.")
+            }
+            if (r.meta.games >= 50 && adjudicated > r.meta.games * 0.3) add("Check: ${"%.0f".format(adjudicated * 100.0 / r.meta.games)}% of games reached the round limit. " +
+                "Long board stalls are more common here than at a real table, so win rates lean on the life/board scoring.")
+            playerNotes.filter { it.startsWith("Check:") }.forEach { add(it) }
+        }
+
         /** Wilson score interval, 95%. */
         fun wilson(successes: Int, n: Int, z: Double = 1.96): Pair<Double, Double> {
             if (n == 0) return 0.0 to 0.0

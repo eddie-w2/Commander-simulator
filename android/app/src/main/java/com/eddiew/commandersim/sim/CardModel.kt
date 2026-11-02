@@ -18,7 +18,7 @@ object ManaColor {
 }
 
 /** A mana cost: each coloured pip lists the colours that can pay it; the rest is generic. */
-data class ManaCost(val pips: List<Int>, val generic: Int) {
+data class ManaCost(val pips: List<Int>, val generic: Int, val x: Int = 0) {
     val total: Int get() = pips.size + generic
     /** Colour bits this cost needs at least one of (for each pip). */
     val colorsNeeded: Int get() = pips.fold(0) { m, p -> m or p }
@@ -35,11 +35,12 @@ data class ManaCost(val pips: List<Int>, val generic: Int) {
             val face = cost.substringBefore(" // ")
             val pips = mutableListOf<Int>()
             var generic = 0
+            var x = 0
             Regex("""\{([^}]+)\}""").findAll(face).forEach { m ->
                 val sym = m.groupValues[1].uppercase()
                 when {
                     sym.toIntOrNull() != null -> generic += sym.toInt()
-                    sym == "X" || sym == "Y" || sym == "Z" -> Unit
+                    sym == "X" || sym == "Y" || sym == "Z" -> x++
                     sym == "S" -> generic += 1
                     sym.endsWith("/P") -> Unit
                     sym.contains('/') -> {
@@ -51,16 +52,24 @@ data class ManaCost(val pips: List<Int>, val generic: Int) {
                     else -> generic += 1
                 }
             }
-            return ManaCost(pips, generic)
+            return ManaCost(pips, generic, x)
         }
     }
 }
 
 /** What a card does in the quick model. A card can have several roles. */
-enum class Role { LAND, RAMP_LAND, ROCK, DORK, DRAW, ENGINE, REMOVAL, WIPE, COUNTER, TUTOR, BURN, DRAIN, TOKENS, LIFEGAIN, PROTECTION, RECURSION, CREATURE, OTHER }
+enum class Role { LAND, RAMP_LAND, ROCK, DORK, DRAW, ENGINE, REMOVAL, WIPE, COUNTER, TUTOR, BURN, DRAIN, TOKENS, LIFEGAIN, PROTECTION, RECURSION, TRICK, CREATURE, OTHER }
 
 /** How a removal spell gets rid of its target. */
-enum class RemovalKind { DESTROY, EXILE, BOUNCE, DAMAGE }
+enum class RemovalKind { DESTROY, EXILE, BOUNCE, DAMAGE, MINUS, FIGHT }
+
+enum class TutorDest { HAND, TOP, BATTLEFIELD, GRAVEYARD }
+
+/** What a tutor can find and where it puts it. [types] null = any card. */
+data class TutorSpec(val types: Set<CardType>?, val maxMv: Int?, val dest: TutorDest) {
+    fun allows(c: SimCard) = !c.isLand && (types == null || c.type in types || (CardType.CREATURE in types && c.isCreature)) &&
+        (maxMv == null || c.mv <= maxMv)
+}
 
 /** One card (or token), as the quick model plays it, built from the deck's Scryfall data. */
 class SimCard(
@@ -100,6 +109,26 @@ class SimCard(
     val coverage: Coverage = Coverage(emptyList(), emptyList()),
     /** For tokens: the card that made it. */
     val madeBy: String? = null,
+    /** Mana each use makes ("{T}: Add {C}{C}" = 2), and a "for each" multiplier (Gaea's Cradle). */
+    val manaAmount: Int = 1,
+    val manaScale: Scale? = null,
+    /** Mana an activated mana ability costs to use (Cabal Coffers' {2}). */
+    val manaActivation: Int = 0,
+    val tutor: TutorSpec? = null,
+    /** Combat trick: "+N/+N until end of turn". */
+    val pump: Int = 0,
+    /** Equip cost (null = not equipment). */
+    val equipCost: Int? = null,
+    /** Keywords an equipment or aura gives. */
+    val grants: Int = 0,
+    val isAura: Boolean = false,
+    /** "… spells you cost {N} less": which spells ("creature", "artifact", "noncreature", "instant", or "" for all) and N. */
+    val reduceFor: String? = null,
+    val reduceBy: Int = 0,
+    /** Poison counters dealt with combat damage to a player (toxic N). */
+    val toxic: Int = 0,
+    val loyalty: List<Loyalty> = emptyList(),
+    val chapters: List<List<Effect>> = emptyList(),
 ) {
     val isLand: Boolean get() = Role.LAND in roles
     val isManaSource: Boolean get() = produces != 0 && (Role.LAND in roles || Role.ROCK in roles || Role.DORK in roles)
@@ -107,6 +136,8 @@ class SimCard(
     val isToken: Boolean get() = madeBy != null
     val isArtifact: Boolean get() = type == CardType.ARTIFACT || Role.ROCK in roles
     val isPermanent: Boolean get() = type != CardType.INSTANT && type != CardType.SORCERY
+    val isPlaneswalker: Boolean get() = type == CardType.PLANESWALKER
+    val isEquipment: Boolean get() = equipCost != null
 
     fun has(bit: Int) = keywords and bit != 0
     val flying get() = has(Kw.FLYING)
@@ -120,6 +151,20 @@ class SimCard(
     val firstStrike get() = has(Kw.FIRST_STRIKE) || has(Kw.DOUBLE_STRIKE)
     val menace get() = has(Kw.MENACE)
 
+    /** This creature as copied by [via]: a token copy, or the clone card itself. Never a commander. */
+    fun copiedBy(via: SimCard, token: Boolean): SimCard = SimCard(
+        name = if (token) "$name token copy (${via.name})" else "${via.name} (as $name)",
+        type = type, cost = cost, mv = mv, roles = roles, produces = produces, entersTapped = false, power = power, toughness = toughness,
+        keywords = keywords, anthem = anthem, lordType = lordType, buff = buff, draws = draws, damage = damage, tokenPower = tokenPower,
+        isCommander = false, subtypes = subtypes, removalKind = removalKind, removalDamage = removalDamage,
+        recursionToBattlefield = recursionToBattlefield,
+        // A copy keeps everything except abilities that would copy again.
+        abilities = abilities.filter { a -> a.effects.none { it is CopyCreature } }, activated = activated, coverage = coverage,
+        madeBy = if (token) via.name else null,
+        manaAmount = manaAmount, manaScale = manaScale, manaActivation = manaActivation, tutor = tutor, pump = pump, equipCost = equipCost,
+        grants = grants, isAura = isAura, reduceFor = reduceFor, reduceBy = reduceBy, toxic = toxic, loyalty = loyalty, chapters = chapters,
+    )
+
     /** True when some parsed ability or activation has an effect of this type. */
     fun parses(kind: Class<out Effect>): Boolean =
         abilities.any { a -> a.effects.any { kind.isInstance(it) } } || activated.any { a -> a.effects.any { kind.isInstance(it) } }
@@ -130,10 +175,20 @@ class SimCard(
         if (isManaSource && !isLand) add("mana: ${ManaColor.letters(produces).ifEmpty { "C" }}")
         if (anthem > 0) add("+$anthem/+$anthem to ${lordType?.let { "${it}s" } ?: "creatures"} you control")
         if (buff > 0) add("+$buff power to one creature")
-        roles.filter { it in setOf(Role.RAMP_LAND, Role.REMOVAL, Role.WIPE, Role.COUNTER, Role.TUTOR, Role.PROTECTION, Role.RECURSION) }
-            .forEach { add(it.name.lowercase().replace('_', ' ')) }
+        if (manaAmount > 1 || manaScale != null) add("makes ${manaAmount}${manaScale?.describe().orEmpty()} mana" + if (manaActivation > 0) " (costs $manaActivation)" else "")
+        roles.filter { it in setOf(Role.RAMP_LAND, Role.REMOVAL, Role.WIPE, Role.COUNTER, Role.PROTECTION, Role.RECURSION) }
+            .forEach { add(it.name.lowercase().replace('_', ' ') + if (it == Role.REMOVAL) " (${removalKind.name.lowercase()})" else "") }
+        tutor?.let { t -> add("tutor: ${t.types?.joinToString("/") { it.label.lowercase() } ?: "any card"}${t.maxMv?.let { " (MV ≤ $it)" }.orEmpty()} → ${t.dest.name.lowercase()}") }
+        if (pump > 0) add("combat trick +$pump/+$pump")
+        equipCost?.let { add("equip $it: +$buff" + Kw.names(grants).takeIf { g -> g.isNotEmpty() }?.joinToString(", ", ", ").orEmpty()) }
+        if (isAura && buff > 0) add("aura: +$buff" + Kw.names(grants).takeIf { g -> g.isNotEmpty() }?.joinToString(", ", ", ").orEmpty())
+        if (reduceBy > 0) add("${reduceFor?.ifBlank { null }?.let { "$it " } ?: ""}spells cost $reduceBy less")
+        if (toxic > 0) add("toxic $toxic")
+        if (has(Kw.INFECT)) add("infect")
         abilities.forEach { add(it.describe()) }
         activated.forEach { add(it.describe()) }
+        loyalty.forEach { add(it.describe()) }
+        chapters.forEachIndexed { i, e -> add("chapter ${i + 1}: " + e.joinToString("; ") { it.describe() }) }
     }
 
     companion object {
@@ -144,10 +199,33 @@ class SimCard(
             pattern.find(text)?.groupValues?.getOrNull(1)?.lowercase()?.let { numberWords[it] ?: it.toIntOrNull() }
 
         private val wipeRx = Regex("(destroy|exile) all |(destroy|exile) each |all creatures get -\\d+/-\\d+|return all nonland permanents")
-        private val removalRx = Regex("(destroy|exile) (target|up to (one|two) target)|deals? \\d+ damage to (any target|target creature)|return target (nonland )?(creature|permanent) to its owner's hand|target (creature|player)'s owner shuffles")
+        private val removalRx = Regex("(destroy|exile) (target|up to (one|two) target)|deals? \\d+ damage to (any target|target creature)|return target (nonland )?(creature|permanent) to its owner's hand|target (creature|player)'s owner shuffles|target creature( an opponent controls| you don't control)? gets -\\d+/-\\d+|fights (target|up to one target|another target) creature")
         private val counterRx = Regex("counter target (spell|noncreature spell|creature spell|activated)")
         private val rampRx = Regex("search your library for (up to (one|two|three) )?(a |an )?(basic )?lands? cards?.{0,80}(onto|put (it|them) onto) the battlefield")
-        private val tutorRx = Regex("search your library for an? card")
+        private val tutorRx = Regex("search your library for (a|an|up to one) ([a-z, ]*?)\\bcards?\\b")
+        private fun tutorSpec(text: String): TutorSpec? {
+            val m = tutorRx.findAll(text).firstOrNull { "land" !in it.groupValues[2] && "basic" !in it.groupValues[2] } ?: return null
+            val words = m.groupValues[2]
+            val types = buildSet {
+                if ("creature" in words) add(CardType.CREATURE)
+                if ("artifact" in words || "equipment" in words) add(CardType.ARTIFACT)
+                if ("enchantment" in words || "aura" in words) add(CardType.ENCHANTMENT)
+                if ("instant" in words) add(CardType.INSTANT)
+                if ("sorcery" in words) add(CardType.SORCERY)
+                if ("planeswalker" in words) add(CardType.PLANESWALKER)
+            }.ifEmpty { null }
+            val after = text.substring(m.range.first)
+            val maxMv = Regex("mana value (\\d+) or less").find(after.take(120))?.groupValues?.get(1)?.toIntOrNull()
+            val dest = when {
+                Regex("(put|onto) (it|that card|them)? ?onto the battlefield|put it onto the battlefield").containsMatchIn(after.take(200)) -> TutorDest.BATTLEFIELD
+                Regex("(put|puts) (it|that card|them) into (your|its owner's) graveyard").containsMatchIn(after.take(200)) -> TutorDest.GRAVEYARD
+                "on top of your library" in after.take(200) || "on top" in after.take(160) -> TutorDest.TOP
+                else -> TutorDest.HAND
+            }
+            return TutorSpec(types, maxMv, dest)
+        }
+        private val pumpRx = Regex("target creature gets \\+(\\d+)/\\+(\\d+) until end of turn")
+        private val reduceRx = Regex("(creature |artifact |noncreature |instant and sorcery |instant or sorcery |enchantment )?spells you cast cost \\{(\\d+)\\} less")
         val protectionRx = listOf(
             Regex("""(creatures|permanents|artifacts|other creatures) you control (gain|have|get)[^.]{0,60}(hexproof|indestructible|shroud|protection|ward)"""),
             Regex("""target (creature|permanent|artifact|commander)( or [a-z]+)?( you control)? (gains|has|gets)[^.]{0,60}(hexproof|indestructible|shroud|protection)"""),
@@ -225,7 +303,10 @@ class SimCard(
             val drawsOnCast = countAfter(text, Regex("draws? (a|an|one|two|three|four|five|six|seven|x|\\d+) cards?"))
             val engine = Regex("(at the beginning of your (upkeep|draw step|end step)|whenever [^.]{0,80}),? (you may )?draw").containsMatchIn(text)
             if (engine) roles += Role.ENGINE else if (drawsOnCast != null || "draw" in tags) roles += Role.DRAW
-            if (tutorRx.containsMatchIn(text) || "tutor" in tags) roles += Role.TUTOR
+            val tutor = tutorSpec(text)
+            if (tutor != null || "tutor" in tags) roles += Role.TUTOR
+            val pump = if (type == CardType.INSTANT) pumpRx.find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0 else 0
+            if (pump > 0) roles += Role.TRICK
             val burn = countAfter(text, Regex("deals? (\\d+|x) damage to (any target|target player|target opponent|each opponent)"))
             if (burn != null && "each opponent" in text) roles += Role.DRAIN
             else if (burn != null || "burn" in tags) roles += Role.BURN
@@ -237,7 +318,7 @@ class SimCard(
             if (roles.isEmpty() || roles == setOf(Role.LIFEGAIN)) roles += Role.OTHER
 
             val kwText = card.keywords.orEmpty().joinToString(", ") { it.lowercase() }
-            var keywords = Kw.of(kwText) and Kw.WARD.inv() or (if ("ward" in kwText) Kw.WARD else 0)
+            var keywords = Kw.of(kwText)
             val norm = EffectParser.normalise(card.name, o)
             if (Regex("""~ can't be blocked""").containsMatchIn(norm)) keywords = keywords or Kw.UNBLOCKABLE
             if (Regex("""~ can't block""").containsMatchIn(norm)) keywords = keywords or Kw.CANT_BLOCK
@@ -248,12 +329,15 @@ class SimCard(
             val lord = lordRx.find(text)?.takeIf { singular(it.groupValues[1]) != "creature" }
             val anthem = (lord?.groupValues?.get(3) ?: anthemRx.find(text)?.groupValues?.get(2))?.toIntOrNull()?.coerceAtMost(3) ?: 0
             val removalKind = when {
+                Regex("fights (target|up to one target|another target) creature").containsMatchIn(text) -> RemovalKind.FIGHT
+                Regex("target creature( an opponent controls| you don't control)? gets -\\d+/-\\d+").containsMatchIn(text) -> RemovalKind.MINUS
                 Regex("exile (target|all|each|up to)").containsMatchIn(text) -> RemovalKind.EXILE
                 Regex("return target [a-z ]+ to its owner's hand").containsMatchIn(text) -> RemovalKind.BOUNCE
                 Regex("deals? (\\d+|x) damage to (any target|target creature)").containsMatchIn(text) -> RemovalKind.DAMAGE
                 else -> RemovalKind.DESTROY
             }
-            val removalDamage = countAfter(text, Regex("deals? (\\d+|x) damage to (any target|target creature)")) ?: 0
+            val removalDamage = countAfter(text, Regex("deals? (\\d+|x) damage to (any target|target creature)"))
+                ?: Regex("gets -(\\d+)/-(\\d+)").find(text)?.groupValues?.get(2)?.toIntOrNull() ?: 0
             val subtypes = typeLine.substringBefore("//").substringAfter("—", "").lowercase().split(' ').filter { it.isNotBlank() }.toSet()
 
             // Which lines the role-based effects already cover (for the coverage report).
@@ -261,9 +345,32 @@ class SimCard(
                 counterRx.containsMatchIn(line) || rampRx.containsMatchIn(line) || tutorRx.containsMatchIn(line) ||
                 anthemRx.containsMatchIn(line) || lordRx.containsMatchIn(line) || buffRx.containsMatchIn(line) ||
                 protectionRx.any { it.containsMatchIn(line) } || recursionRx.any { it.containsMatchIn(line) } ||
+                pumpRx.containsMatchIn(line) || reduceRx.containsMatchIn(line) || tutorRx.containsMatchIn(line) ||
+                Regex("""(equipped|enchanted) creature (gets|has)""").containsMatchIn(line) ||
                 Regex("""~ can't (be blocked|block)|add \{|enters tapped|enters the battlefield tapped|^as ~ enters|for each|you may play|can't be countered""").containsMatchIn(line)
             val parsed = if (type == CardType.LAND) null else
                 EffectParser.parse(card.name, card.oracle, permanent = type != CardType.INSTANT && type != CardType.SORCERY, roleLine = ::roleLine)
+
+            // Mana: how much each use makes.
+            val manaLine = Regex("""(\{[^:]*\{t\}[^:]*|\{t\}[^:]*): add ([^.]+)""").find(text)
+            var manaAmount = 1
+            var manaScale: Scale? = null
+            var manaActivation = 0
+            if (manaLine != null) {
+                val what = manaLine.groupValues[2]
+                manaAmount = when {
+                    what.startsWith("two mana") -> 2
+                    what.startsWith("three mana") -> 3
+                    else -> Regex("""\{[wubrgc]\}""").findAll(what.substringBefore(" or ")).count().coerceAtLeast(1)
+                }
+                if ("for each" in what || "equal to" in what) manaScale = EffectParser.scale(what)
+                manaActivation = Regex("""\{(\d+)\}""").find(manaLine.groupValues[1])?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            }
+            val equip = Regex("""\bequip \{(\d+)\}""").find(text)?.groupValues?.get(1)?.toIntOrNull()
+                ?: if (Regex("""\bequip\b""").containsMatchIn(text) && "Equipment" in typeLine) 2 else null
+            val isAura = "Aura" in typeLine
+            val grantLine = Regex("""(equipped|enchanted) creature (?:gets [^.]*? and )?(?:has|gains) ([a-z, ]+)""").find(text)?.groupValues?.get(2).orEmpty()
+            val reduce = reduceRx.find(text)
 
             return SimCard(
                 name = card.name, type = type, cost = cost, mv = maxOf(mv, cost.total), roles = roles,
@@ -284,6 +391,11 @@ class SimCard(
                 recursionToBattlefield = Regex("graveyard (onto|to) the battlefield").containsMatchIn(text),
                 abilities = parsed?.abilities.orEmpty(), activated = parsed?.activated.orEmpty(),
                 coverage = parsed?.coverage ?: Coverage(emptyList(), emptyList()),
+                manaAmount = manaAmount, manaScale = manaScale, manaActivation = manaActivation,
+                tutor = tutor, pump = pump, equipCost = equip, grants = Kw.of(grantLine), isAura = isAura,
+                reduceFor = reduce?.groupValues?.get(1)?.trim(), reduceBy = reduce?.groupValues?.get(2)?.toIntOrNull() ?: 0,
+                toxic = Regex("""\btoxic (\d+)""").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
+                loyalty = parsed?.loyalty.orEmpty(), chapters = parsed?.chapters.orEmpty(),
             )
         }
     }

@@ -191,7 +191,7 @@ object AndroidForge {
             running = false
         }
 
-        fun notes(): List<String> = listOfNotNull(
+        override fun notes(): List<String> = listOfNotNull(
             "Played with the Forge rules engine and Forge AI" + (if (packLabel.isBlank()) "." else " ($packLabel)."),
             if (missing.isEmpty()) null
             else "Forge doesn't know ${missing.size} card${if (missing.size > 1) "s" else ""}, so they were left out: " +
