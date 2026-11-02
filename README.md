@@ -23,7 +23,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 - **Releases:** open the repo's **Releases** page and download `commander-sim-vX.Y.ZZ.apk` from the latest release.
 - **Latest build:** **Actions** → latest green **Android** run → **Artifacts** → `commander-sim-debug-apk` (a zip).
 
-Open the APK on your phone and allow "install unknown apps" when asked. Installing over the previous version keeps your decks.
+Open the APK on your phone and allow "install unknown apps" when asked. From v0.1.02 on, every build is signed with the same key (`android/app/debug.keystore`), so new versions install over the old one and keep your decks. Builds before v0.1.02 used a random key, so uninstall those once first.
 
 ### Build locally
 Android Studio (Ladybug or newer), JDK 17: open `/android` and run. Or run `./gradlew assembleDebug` from `/android`.

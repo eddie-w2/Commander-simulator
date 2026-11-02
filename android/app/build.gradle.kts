@@ -17,6 +17,17 @@ android {
         versionName = "0.1.02"
     }
 
+    signingConfigs {
+        // A fixed key checked into the repo so every build (local or CI) can install over the previous one.
+        // Testing builds only; a release build for the Play Store will need a private key.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
