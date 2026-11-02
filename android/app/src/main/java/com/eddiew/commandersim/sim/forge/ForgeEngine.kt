@@ -151,6 +151,7 @@ internal class ForgeEngine(
         private fun ForgeEngine.initOnce() {
             if (initialised == resRoot.path) return
             val langDir = File(resRoot, "languages")
+            forge.util.Lang.createInstance("en-US")
             runCatching { Localizer.getInstance().initialize("en-US", langDir.path + File.separator) }
             // Forge reads its strings through a URLClassLoader, which isn't dependable on Android.
             // Load the English file directly and put it in place so every lookup works.
