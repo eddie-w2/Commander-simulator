@@ -30,8 +30,14 @@ import kotlin.coroutines.cancellation.CancellationException
 
 sealed interface SimState {
     data object Idle : SimState
-    data class Running(val progress: Float, val status: String = "", val startedAt: Long = System.currentTimeMillis()) : SimState
-    data class Failed(val message: String) : SimState
+    data class Running(
+        val progress: Float,
+        val status: String = "",
+        val startedAt: Long = System.currentTimeMillis(),
+        val log: List<String> = emptyList(),
+        val now: Long = System.currentTimeMillis(),
+    ) : SimState
+    data class Failed(val message: String, val log: List<String> = emptyList()) : SimState
     data object Done : SimState
 }
 
@@ -417,17 +423,31 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
         simJob?.cancel()
         simJob = viewModelScope.launch {
             val started = System.currentTimeMillis()
-            _sim.value = SimState.Running(0f, "Starting…", started)
+            var progress = 0f
+            fun snapshot() = SimState.Running(progress, ctl.status, started, ctl.logLines())
+            _sim.value = snapshot()
+            // Forge games are long; refresh the status line every second, not just between games.
+            val ticker = launch {
+                while (true) {
+                    kotlinx.coroutines.delay(1000)
+                    if (_sim.value is SimState.Running) _sim.value = snapshot()
+                }
+            }
             try {
-                val report = simulator.run(config, decks.value, ctl) { p -> _sim.value = SimState.Running(p, ctl.status, started) }
+                val report = simulator.run(config, decks.value, ctl) { p -> progress = p; _sim.value = snapshot() }
+                ticker.cancel()
                 reportRepo.save(report)
                 _sim.value = SimState.Done
                 onDone()
             } catch (e: CancellationException) {
+                ticker.cancel()
                 _sim.value = SimState.Idle
                 throw e
-            } catch (e: Exception) {
-                _sim.value = SimState.Failed(e.message ?: "Simulation failed")
+            } catch (e: Throwable) {
+                ticker.cancel()
+                ctl.log("Failed: ${e.javaClass.simpleName}: ${e.message}")
+                e.stackTrace.take(6).forEach { ctl.log("   at $it") }
+                _sim.value = SimState.Failed("${e.javaClass.simpleName}: ${e.message ?: "simulation failed"}", ctl.logLines())
             }
         }
     }
@@ -440,6 +460,6 @@ class AppViewModel(app: Application, autoLoad: Boolean) : AndroidViewModel(app) 
     /** Stops after the current game and builds results from the games played so far. */
     fun stopEarly() {
         control?.stopRequested = true
-        (_sim.value as? SimState.Running)?.let { _sim.value = it.copy(status = "Finishing the current game…") }
+        control?.log("Stopping after the current game…")
     }
 }

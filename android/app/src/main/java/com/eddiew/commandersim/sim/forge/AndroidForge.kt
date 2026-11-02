@@ -62,10 +62,10 @@ object AndroidForge {
         private var engine: ForgeEngine? = null
         var control: SimControl? = null
 
-        override fun prepare(decks: List<Deck>) {
-            val res = ensureUnpacked(context)
+        override fun prepare(decks: List<Deck>, control: SimControl) {
+            val res = ensureUnpacked(context) { control.log(it) }
             val work = File(context.cacheDir, "forge-work")
-            engine = ForgeEngine(res, work).also { it.prepare(decks) }
+            engine = ForgeEngine(res, work).also { it.prepare(decks, control) }
         }
 
         override fun play(seats: List<Deck>, seed: Long): GameResult =

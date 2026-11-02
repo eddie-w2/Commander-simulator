@@ -3,6 +3,7 @@ package com.eddiew.commandersim.sim.forge
 import com.eddiew.commandersim.data.model.Deck
 import com.eddiew.commandersim.sim.GamePlayer
 import com.eddiew.commandersim.sim.GameResult
+import com.eddiew.commandersim.sim.SimControl
 import forge.CardStorageReader
 import forge.StaticData
 import forge.ai.AiProfileUtil
@@ -64,7 +65,15 @@ internal class ForgeEngine(
     private fun entryFor(name: String): String? =
         index[name.lowercase()] ?: index[name.substringBefore(" // ").trim().lowercase()]
 
-    override fun prepare(decks: List<Deck>) {
+    private var control: SimControl? = null
+
+    override fun prepare(decks: List<Deck>, control: SimControl) {
+        this.control = control
+        prepare(decks)
+    }
+
+    fun prepare(decks: List<Deck>) {
+        control?.log("Starting the Forge engine…")
         initOnce()
         // 1. Extract only the card scripts these decks use.
         val cardsDir = File(workDir, "cardsfolder").apply { deleteRecursively(); mkdirs() }
@@ -81,6 +90,7 @@ internal class ForgeEngine(
                 zip.getInputStream(ze).use { input -> out.outputStream().use { input.copyTo(it) } }
             }
         }
+        control?.log("Loading ${names.size} card scripts, editions and tokens…")
         // 2. Load them (plus editions and tokens) into Forge's card database.
         val customEditions = File(workDir, "custom-editions").apply { mkdirs() }
         StaticData(
@@ -91,6 +101,7 @@ internal class ForgeEngine(
             "Latest Art All Editions",
             false, false, false, false,
         ).apply { setMulliganRule(forge.MulliganDefs.MulliganRule.London) }
+        control?.log("Building Forge decks…")
         // 3. Build Forge decks.
         forgeDecks.clear()
         for (d in decks) {
@@ -107,6 +118,7 @@ internal class ForgeEngine(
             forgeDecks[d.id] = PreparedDeck(d, fd, nameMap)
         }
         missingCards = missing.distinct().sorted()
+        if (missingCards.isNotEmpty()) control?.log("Forge doesn't know: ${missingCards.take(8).joinToString(", ")}")
     }
 
     override fun play(seats: List<Deck>, seed: Long): GameResult {
@@ -124,7 +136,16 @@ internal class ForgeEngine(
         val match = Match(rules, players, "Commander Sim")
         val game = match.createGame()
         game.setNoGUIUser()
-        val recorder = ForgeRecorder(game, prepared.map { it.nameMap }, maxRounds, maxMillisPerGame)
+        val ctl = control
+        val gameStart = System.currentTimeMillis()
+        val label = ctl?.let { "Game ${it.gameIndex}/${it.gamesTotal}" } ?: "Game"
+        ctl?.log("$label: shuffling up")
+        val recorder = ForgeRecorder(game, prepared.map { it.nameMap }, maxRounds, maxMillisPerGame) { round ->
+            if (ctl != null) {
+                val secs = (System.currentTimeMillis() - gameStart) / 1000
+                ctl.status = "$label · round $round · ${secs / 60}:%02d".format(secs % 60)
+            }
+        }
         game.subscribeToEvents(recorder)
 
         // Forge recurses deeply; give the game its own thread with a large stack.
@@ -135,16 +156,27 @@ internal class ForgeEngine(
             } catch (e: Throwable) {
                 failure = e
             }
-        }, "forge-game", 256L * 1024 * 1024)
+        }, "forge-game", 64L * 1024 * 1024)
         t.isDaemon = true
-        t.start()
+        try {
+            t.start()
+        } catch (e: Throwable) {
+            // Couldn't get a big stack: play on this thread instead.
+            ctl?.log("Large-stack thread unavailable (${e.javaClass.simpleName}); using a normal thread")
+            try { match.startGame(game) } catch (x: Throwable) { failure = x }
+        }
         t.join(maxMillisPerGame + 30_000)
         if (t.isAlive) {
             // The AI is stuck inside a turn: force a draw and give it a moment to unwind.
             runCatching { game.setGameOver(GameEndReason.Draw) }
             t.join(10_000)
         }
-        failure?.let { if (it is VirtualMachineError) throw it }
+        failure?.let { f ->
+            ctl?.log("$label error: ${f.javaClass.simpleName}: ${f.message} @ ${f.stackTrace.take(3).joinToString(" < ")}")
+            if (f is VirtualMachineError) throw f
+        }
+        if (t.isAlive) ctl?.log("$label didn't finish in time; counted as a draw")
+        ctl?.log("$label done in ${(System.currentTimeMillis() - gameStart) / 1000}s")
         lastDiagnostics = "events=${recorder.eventCounts.toSortedMap()} errors=${recorder.errors} life=${recorder.lifeTotals()} failure=$failure"
         return recorder.finish(timedOut = t.isAlive || failure != null)
     }
@@ -173,6 +205,8 @@ internal class ForgeEngine(
             set("english", true)
             set("silent", true)
             AiProfileUtil.loadAllProfiles(File(resRoot, "ai").path)
+            // Skips some expensive rules checks, as Forge's own "performance mode" preference does.
+            runCatching { forge.game.spellability.Spell.setPerformanceMode(true) }
 
             // Forge's game data lists. TypeLists.txt is essential: it tells the engine that "Plains" etc. are
             // basic land types, which is where basic lands get their mana abilities.

@@ -30,6 +30,12 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -175,7 +181,16 @@ fun SimulateScreen(vm: AppViewModel, onFinished: () -> Unit) {
 
             when (val s = sim) {
                 is SimState.Running -> RunningPanel(s, totalGames, onStop = { vm.stopEarly() }, onCancel = { vm.cancelSimulation() })
-                is SimState.Failed -> Notice(s.message, color = Hud.Negative)
+                is SimState.Failed -> HudPanel(title = "Simulation failed", accent = Hud.Negative) {
+                    Text(s.message, style = MaterialTheme.typography.bodyMedium, color = Hud.Negative)
+                    if (s.log.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        LogView(s.log, maxLines = 40)
+                        Spacer(Modifier.height(8.dp))
+                        val clipboard = LocalClipboardManager.current
+                        HudOutlineButton("Copy log", { clipboard.setText(AnnotatedString((listOf(s.message) + s.log).joinToString("\n"))) })
+                    }
+                }
                 else -> Unit
             }
 
@@ -238,7 +253,8 @@ private fun RunningPanel(state: SimState.Running, total: Int, onStop: () -> Unit
     val anim by animateFloatAsState(progress, tween(300), label = "p")
     val spin = rememberInfiniteTransition(label = "spin")
     val angle by spin.animateFloat(0f, 360f, infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart), label = "a")
-    val elapsed = (System.currentTimeMillis() - state.startedAt) / 1000
+    val elapsed = (state.now - state.startedAt) / 1000
+    var showLog by remember { mutableStateOf(false) }
     val done = (progress * total).roundToInt()
     val eta = if (done > 0) (elapsed * (total - done) / done) else null
     HudPanel(title = "Simulating", accent = Hud.Cyan) {
@@ -270,6 +286,25 @@ private fun RunningPanel(state: SimState.Running, total: Int, onStop: () -> Unit
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HudButton("Stop & show results", onStop, Modifier.weight(1f), enabled = done > 0)
             HudOutlineButton("Cancel", onCancel, color = Hud.Negative)
+        }
+        if (state.log.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            HudChip(if (showLog) "Hide log" else "Show log", showLog, { showLog = !showLog }, color = Hud.Muted)
+            if (showLog) {
+                Spacer(Modifier.height(6.dp))
+                LogView(state.log, maxLines = 12)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LogView(lines: List<String>, maxLines: Int) {
+    Column(
+        Modifier.fillMaxWidth().background(Hud.Bg).padding(8.dp),
+    ) {
+        lines.takeLast(maxLines).forEach {
+            Text(it, fontFamily = Mono, fontSize = 10.sp, color = Hud.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

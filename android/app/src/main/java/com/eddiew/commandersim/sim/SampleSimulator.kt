@@ -41,9 +41,9 @@ class SampleSimulator internal constructor(
         withContext(Dispatchers.Default) {
             val byId = decks.associateBy { it.id }
             val pool = config.deckIds.distinct().mapNotNull { byId[it] }
-            control.status = "Preparing decks…"
-            player.prepare((pool + listOfNotNull(config.ab?.let { byId[it.aId] }, config.ab?.let { byId[it.bId] })).distinctBy { it.id })
-            control.status = "Playing games…"
+            control.log("Preparing ${pool.size} decks…")
+            player.prepare((pool + listOfNotNull(config.ab?.let { byId[it.aId] }, config.ab?.let { byId[it.bId] })).distinctBy { it.id }, control)
+            control.log("Playing games…")
             val run = Run(Random(seed), config, control, onProgress)
             val ab = config.ab
             val comparison = if (ab != null) {
@@ -84,6 +84,7 @@ class SampleSimulator internal constructor(
 
         fun play(seats: List<Deck>, gameSeed: Long): GameResult {
             val start = System.nanoTime()
+            control.gameIndex = games + 1
             val result = player.play(seats, gameSeed)
             nanoSum += System.nanoTime() - start
             games++
@@ -115,6 +116,7 @@ class SampleSimulator internal constructor(
         suspend fun pool(pool: List<Deck>) {
             val podSize = min(config.podSize, pool.size)
             val total = ceil(pool.size * config.gamesPerDeck / podSize.toDouble()).toInt()
+            control.gamesTotal = total
             val counts = HashMap<String, Int>()
             val step = maxOf(1, total / 200)
             for (g in 0 until total) {
@@ -129,6 +131,7 @@ class SampleSimulator internal constructor(
             val opps = min(config.podSize - 1, field.size)
             val counts = HashMap<String, Int>()
             var n = config.gamesPerDeck
+            control.gamesTotal = n * 2
             val step = maxOf(1, n / 200)
             var aWins = 0; var bWins = 0; var onlyA = 0; var onlyB = 0
             var diffSum = 0.0; var diffSq = 0.0

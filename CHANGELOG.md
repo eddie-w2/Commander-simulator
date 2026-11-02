@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.04
+- Forge runs show live progress: the current game, round and time, updated every second, plus a run log (Show log) covering each start-up step.
+- If a run fails, the error and log are shown and can be copied to share.
+- Forge games run with Forge's performance mode and a safer game thread.
+
 ## v0.1.03
 - **Forge engine on the phone:** simulations can now use Forge's real rules engine and AI. The app loads only the card scripts your decks need, records every game event into the full statistics, shows live progress with time remaining, and lets you stop early and keep the results. Cards Forge doesn't know are listed in the results.
 - **Commander precons:** Decks → Precons lists every official Commander precon, synced from MTGJSON, kept on the phone and refreshed weekly. Search by name, set code or year, preview the commander and colours, and add a deck in one tap (optionally marked as owned). Added precons can be re-synced like linked decks.

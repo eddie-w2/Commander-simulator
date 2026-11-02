@@ -42,6 +42,8 @@ internal class ForgeRecorder(
     private val nameMaps: List<Map<String, String>>,
     private val maxRounds: Int,
     private val maxMillis: Long,
+    /** Called at the start of each round with the round number, for progress display. */
+    private val onRound: (Int) -> Unit = {},
 ) {
     /** Players in registration order, i.e. the order of the decks passed in. */
     private val players: List<Player> = game.registeredPlayers.toList()
@@ -172,6 +174,7 @@ internal class ForgeRecorder(
         }
         turnsTaken[s]++
         t.turnsTaken = turnsTaken[s]
+        if (turnOrder.firstOrNull() == s) runCatching { onRound(turnsTaken[s]) }
         val i = turnIdx(s)
         val hand = p.getCardsIn(ZoneType.Hand).size
         val battlefield = p.getCardsIn(ZoneType.Battlefield)

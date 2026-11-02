@@ -214,14 +214,14 @@ internal class GameResult(
 /** Something that can play one game between decks: the sample model or Forge. */
 internal interface GamePlayer {
     /** Called once per simulation with every deck that will play. */
-    fun prepare(decks: List<Deck>) {}
+    fun prepare(decks: List<Deck>, control: SimControl) {}
     fun play(seats: List<Deck>, seed: Long): GameResult
 }
 
 /** The simplified sample model. */
 internal class ToyGamePlayer : GamePlayer {
     private val profiles = HashMap<String, DeckProfile>()
-    override fun prepare(decks: List<Deck>) { profiles.clear() }
+    override fun prepare(decks: List<Deck>, control: SimControl) { profiles.clear() }
     override fun play(seats: List<Deck>, seed: Long): GameResult =
         ToyGame(seats.map { d -> profiles.getOrPut(d.id) { DeckProfile.from(d) } }, Random(seed)).play()
 }
