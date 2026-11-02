@@ -98,8 +98,8 @@ val bundleForgePack by tasks.registering {
     doLast {
         val dir = outDir.get().asFile
         dir.mkdirs()
-        packApk.copyTo(java.io.File(dir, "forge-pack.apk"), overwrite = true)
-        java.io.File(dir, "bundled.txt").writeText(
+        packApk.copyTo(dir.resolve("forge-pack.apk"), overwrite = true)
+        dir.resolve("bundled.txt").writeText(
             "forgeCommit=${forgeVersion.readText().trim()}\napiVersion=1\nkotlin=${libs.versions.kotlin.get()}\nsize=${packApk.length()}\n",
         )
     }
